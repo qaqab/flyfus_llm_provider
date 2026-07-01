@@ -1,0 +1,43 @@
+provider: flypower_llm_provider
+label:
+  en_US: Flypower LLM Provider
+  zh_Hans: Flypower 大模型供应商
+description:
+  en_US: OpenAI-compatible LLM provider.
+  zh_Hans: OpenAI 兼容大模型供应商。
+icon_small:
+  en_US: icon.svg
+supported_model_types:
+  - llm
+configurate_methods:
+  - predefined-model
+provider_credential_schema:
+  credential_form_schemas:
+    - variable: api_key
+      label:
+        en_US: API Key
+        zh_Hans: API Key
+      type: secret-input
+      required: true
+      placeholder:
+        en_US: Enter API Key
+        zh_Hans: 输入 API Key
+    - variable: endpoint_url
+      label:
+        en_US: API endpoint URL
+        zh_Hans: API 地址
+      type: text-input
+      required: true
+      placeholder:
+        en_US: Base URL, e.g. https://openapi.flyposter.ai/v1
+        zh_Hans: Base URL，例如 https://openapi.flyposter.ai/v1
+models:
+  llm:
+    predefined:
+      - "models/llm/*.yaml"
+    position: "models/llm/_position.yaml"
+extra:
+  python:
+    provider_source: provider/flypower_llm_provider.py
+    model_sources:
+      - "models/llm/llm.py"
