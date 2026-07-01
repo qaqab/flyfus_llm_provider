@@ -1,7 +1,10 @@
+from functools import lru_cache
+from pathlib import Path
 from typing import Generator, Optional, Union
 from urllib.parse import urljoin
 
 import requests
+import yaml
 
 from dify_plugin.entities.model.llm import LLMResult
 from dify_plugin.entities.model.message import (
@@ -25,7 +28,7 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
     - 固定走 chat 模式。
     - 默认使用新版工具调用 tool_call。
     - 转换图片和文档输入。
-    - 使用 max_completion_tokens 参数。
+    - 为 GPT 5 系列使用 max_completion_tokens 参数。
     - 用轻量请求校验供应商凭据。
 
     文档按 OpenAI Chat Completions 的原生 file content part 传递。
@@ -36,8 +39,8 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
         """补齐运行时凭据默认值。
 
         Dify 的 OpenAI 兼容基类会根据 credentials["mode"] 决定调用
-        /chat/completions 还是 /completions。我们当前预设的三个 GPT 模型
-        都是聊天模型，所以统一使用 chat。
+        /chat/completions 还是 /completions。本插件所有预设模型都是聊天模型，
+        所以统一使用 chat。
         """
         normalized_credentials = dict(credentials)
         normalized_credentials["mode"] = "chat"
@@ -106,17 +109,6 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
             normalized_parameters["max_completion_tokens"] = normalized_parameters.pop("max_tokens")
         return normalized_parameters
 
-    def _get_document_file_data(self, document_content: DocumentPromptMessageContent) -> str:
-        """取得 OpenAI Chat Completions 原生 file_data。
-
-        Dify 传入 base64_data 时，按官方格式整理为 data URL。
-        这里不做文档解析，也不把文档正文拼进 prompt。
-        """
-        if document_content.base64_data:
-            return f"data:{document_content.mime_type};base64,{document_content.base64_data}"
-
-        raise ValueError("文档输入缺少 base64_data，无法按 Chat Completions 原生文件格式发送。")
-
     def validate_credentials(self, model: str, credentials: dict) -> None:
         """校验供应商凭据。
 
@@ -124,7 +116,8 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
         """
         normalized_credentials = self._normalize_credentials(model, credentials)
         available_models = self._list_available_models(normalized_credentials)
-        matched_models = self._predefined_chat_models & available_models
+        predefined_models = self._load_predefined_chat_models()
+        matched_models = predefined_models & available_models
         if not matched_models:
             raise CredentialsValidateFailedError(
                 "该 API Key 的 /models 没有返回本插件支持的聊天模型，请检查 API 地址或密钥。"
@@ -189,7 +182,7 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
                         "type": "file",
                         "file": {
                             "filename": document_content.filename or "document",
-                            "file_data": self._get_document_file_data(document_content),
+                            "file_data": document_content.data,
                         },
                     }
                 )
@@ -221,33 +214,22 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
             user=user,
         )
 
-    _predefined_chat_models = {
-        "MiniMax-M2.7",
-        "deepseek-v4-flash",
-        "deepseek-v4-pro",
-        "gemini-2.5-flash",
-        "gemini-2.5-pro",
-        "gemini-3-flash-preview",
-        "gemini-3-pro-preview",
-        "gemini-3.1-pro-preview",
-        "gemini-3.5-flash",
-        "glm-5",
-        "glm-5.1",
-        "glm-5.2",
-        "gpt-5.4",
-        "gpt-5.4-mini",
-        "gpt-5.5",
-        "kimi-k2.5",
-        "kimi-k2.7-code",
-        "minimax-m2.5",
-        "qwen3-coder-next",
-        "qwen3-max",
-        "qwen3-vl-flash",
-        "qwen3.5-flash",
-        "qwen3.5-plus",
-        "qwen3.6-flash",
-        "qwen3.6-max-preview",
-        "qwen3.6-plus",
-        "qwen3.7-max",
-        "qwen3.7-plus",
-    }
+    @classmethod
+    @lru_cache(maxsize=1)
+    def _load_predefined_chat_models(cls) -> set[str]:
+        """从模型 YAML 读取预定义聊天模型名，避免 Python 列表和 YAML 重复维护。"""
+        models_dir = Path(__file__).resolve().parent
+        model_names: set[str] = set()
+        for model_file in models_dir.glob("*.yaml"):
+            if model_file.name.startswith("_"):
+                continue
+            with model_file.open("r", encoding="utf-8") as file:
+                payload = yaml.safe_load(file) or {}
+            if (
+                payload.get("model_type") == "llm"
+                and payload.get("model_properties", {}).get("mode") == "chat"
+            ):
+                model_name = payload.get("model")
+                if isinstance(model_name, str) and model_name:
+                    model_names.add(model_name)
+        return model_names
