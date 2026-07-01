@@ -50,9 +50,9 @@ parameter_rules:
   max: 262144
   label:
     en_US: Thinking budget
-    zh_Hans: 思考长度限制
+    zh_Hans: 思考预算
   help:
-    zh_Hans: 思考过程的最大长度，只在思考模式开启时生效。
+    zh_Hans: 思考预算 token 上限，只在思考模式开启时生效。
     en_US: The maximum length of the thinking process, only effective when thinking
       mode is enabled.
 pricing:

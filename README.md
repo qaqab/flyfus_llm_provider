@@ -81,6 +81,22 @@ key 动态只展示可用模型，需要改成动态模型/自定义模型方案
 - `audio`：音频
 - `document`：文档
 
+当前插件只在已核对到上游能力的模型上暴露视频/音频：
+
+| 模型 | 多模态能力 |
+| --- | --- |
+| `gemini-2.5-flash` | 图片、文档、视频、音频 |
+| `gemini-2.5-pro` | 图片、文档、视频、音频 |
+| `gemini-3-flash-preview` | 图片、文档、视频、音频 |
+| `gemini-3-pro-preview` | 图片、文档、视频、音频 |
+| `gemini-3.1-pro-preview` | 图片、文档、视频、音频 |
+| `gemini-3.5-flash` | 图片、文档、视频、音频 |
+| `qwen3-vl-flash` | 图片、视频 |
+| `gpt-5.4` / `gpt-5.4-mini` / `gpt-5.5` | 图片、文档；不声明视频/音频 |
+
+不要仅因为模型支持图片就顺手加 `video` 或 `audio`。新增模型时先核对上游
+模型表；没有明确写音频输入时，不要暴露 `audio`。
+
 文档会转换成 OpenAI Chat Completions 原生文件输入格式：
 
 ```json
@@ -118,10 +134,10 @@ key 动态只展示可用模型，需要改成动态模型/自定义模型方案
 - 如果模型不支持原生 `json_schema`，后续可以按模型增加结构化输出策略。
 - 注释、报错和文档使用中文；代码标识符使用英文。
 
-## 推理与思考参数
+## 思考与推理参数
 
 - `agent-thought` 只声明模型支持思考/推理内容展示，不会额外向上游发送私有参数。
-- `reasoning_effort` 是 OpenAI 风格参数，模型 YAML 里声明后会按模型配置透传或映射。
+- `reasoning_effort` 是 reasoning 风格参数，界面文案按模型语境显示为推理强度或思考强度。
 - `enable_thinking`、`thinking`、`thinking_budget`、`thinking_level`、`include_thoughts`
   都是非标准参数，只有模型 YAML 显式声明 `extra.thinking.mode` 时才会发送。
 - 如果某个模型确实需要 thinking 开关，在该模型 YAML 里增加 `extra.thinking`：
@@ -151,14 +167,19 @@ extra:
     reasoning_effort_target: chat_template_kwargs
 ```
 
-当前模型配置大致分组：
+当前预设模型暴露的参数分组和中文语义：
 
-- `gpt-5.*`：`reasoning_effort`
-- `deepseek-v4-*`：`thinking`、`reasoning_effort`
-- `gemini-2.5-*`：`thinking_budget`、`include_thoughts`
-- `gemini-3*`：`thinking_level`、`include_thoughts`
-- `qwen3*`、`glm-5*`、`kimi-k2.5`：`enable_thinking`、`thinking_budget`
-- `minimax-m2.5`、`MiniMax-M2.7`：`enable_thinking`、`thinking_budget`
+- `gpt-5.*`：`reasoning_effort`，显示为推理强度
+- `deepseek-v4-*`：`thinking` 显示为思考模式，`reasoning_effort` 显示为思考强度
+- `gemini-2.5-*`：`thinking_budget` 显示为思考预算，`include_thoughts` 显示为返回思考过程
+- `gemini-3*`：`thinking_level` 显示为思考层级，`include_thoughts` 显示为返回思考过程
+- `qwen3*`、`glm-5*`、`kimi-k2.5`：`enable_thinking` 显示为思考模式，`thinking_budget` 显示为思考预算
+- `minimax-m2.5`、`MiniMax-M2.7`：`enable_thinking` 显示为思考模式，`thinking_budget` 显示为思考预算
+
+注意：这里说的是本插件当前 YAML 暴露的接口参数，不是断言模型能力本质上
+只有“思考”或只有“推理”。聚合商或 OpenRouter 风格模型可能同时暴露
+`enable_thinking`、`reasoning_budget`、`reasoning_effort`、
+`exclude_reasoning_tokens` 等参数；新增这类模型时应按实际上游接口单独配置。
 
 如果上游流式响应里返回 `reasoning` 或 `reasoning_content` 字段，
 插件会包装为：

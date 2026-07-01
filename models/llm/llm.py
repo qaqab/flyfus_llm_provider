@@ -1,3 +1,5 @@
+import re
+from contextlib import suppress
 from functools import lru_cache
 from pathlib import Path
 from typing import Generator, Optional, Union
@@ -14,7 +16,9 @@ from dify_plugin.entities.model.message import (
     ImagePromptMessageContent,
     PromptMessage,
     PromptMessageContentType,
+    PromptMessageRole,
     PromptMessageTool,
+    SystemPromptMessage,
     UserPromptMessage,
     VideoPromptMessageContent,
 )
@@ -38,6 +42,8 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
     文档按 OpenAI Chat Completions 的原生 file content part 传递。
     插件不把文档解码成普通文本，避免伪装成模型原生文档能力。
     """
+
+    _THINK_PATTERN = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 
     def _wrap_thinking_by_reasoning_content(self, delta: dict, is_reasoning: bool) -> tuple[str, bool]:
         """把兼容端返回的 reasoning/reasoning_content 包成 Dify 可识别的 <think> 块。"""
@@ -306,6 +312,43 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
             message_dict["name"] = message.name
         return message_dict
 
+    @classmethod
+    def _drop_analyze_channel(cls, prompt_messages: list[PromptMessage]) -> None:
+        """移除历史 assistant 消息里的思考内容，避免下一轮重复带回上下文。"""
+        for prompt_message in prompt_messages:
+            if not isinstance(prompt_message, AssistantPromptMessage):
+                continue
+            if not isinstance(prompt_message.content, str):
+                continue
+            if "<think>" not in prompt_message.content:
+                continue
+            prompt_message.content = cls._THINK_PATTERN.sub("", prompt_message.content)
+
+    @staticmethod
+    def _apply_json_schema_prompt(model_parameters: dict, prompt_messages: list[PromptMessage]) -> None:
+        """把 Dify 的 json_schema 参数补成兼容端更容易遵循的系统提示。"""
+        if model_parameters.get("response_format") != "json_schema":
+            return
+
+        json_schema = model_parameters.get("json_schema")
+        if not json_schema:
+            return
+
+        structured_output_prompt = (
+            "Your response must be a JSON object that validates against the following JSON schema, and nothing else.\n"
+            f"JSON Schema: ```json\n{json_schema}\n```"
+        )
+        existing_system_prompt = next(
+            (p for p in prompt_messages if p.role == PromptMessageRole.SYSTEM),
+            None,
+        )
+        if existing_system_prompt:
+            existing_system_prompt.content = (
+                structured_output_prompt + "\n\n" + existing_system_prompt.content
+            )
+        else:
+            prompt_messages.insert(0, SystemPromptMessage(content=structured_output_prompt))
+
     def _invoke(
         self,
         model: str,
@@ -317,6 +360,10 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
         stream: bool = True,
         user: Optional[str] = None,
     ) -> Union[LLMResult, Generator]:
+        self._apply_json_schema_prompt(model_parameters, prompt_messages)
+        with suppress(Exception):
+            self._drop_analyze_channel(prompt_messages)
+
         return super()._invoke(
             model=model,
             credentials=self._normalize_credentials(model, credentials),

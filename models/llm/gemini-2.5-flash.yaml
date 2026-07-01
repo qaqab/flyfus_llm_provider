@@ -39,14 +39,14 @@ parameter_rules:
 - name: thinking_budget
   label:
     en_US: Thinking Budget
-    zh_Hans: 推理预算
+    zh_Hans: 思考预算
   type: int
   default: 1024
   min: 0
   max: 24576
   required: false
   help:
-    zh_Hans: 推理预算限制；不设置时模型会按请求复杂度自动调整。
+    zh_Hans: 思考预算限制；不设置时模型会按请求复杂度自动调整。
     en_US: Budget limit for thinking; if not set, the model adjusts automatically.
 - name: include_thoughts
   type: boolean

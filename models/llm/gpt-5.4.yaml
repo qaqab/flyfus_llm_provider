@@ -10,8 +10,6 @@ features:
 - tool-call
 - multi-tool-call
 - stream-tool-call
-- video
-- audio
 model_properties:
   mode: chat
   context_size: 1050000
@@ -40,7 +38,7 @@ parameter_rules:
   label:
     en_US: Reasoning effort
     zh_Hans: 推理强度
-  type: string
+  type: select
   required: false
   options:
   - none
