@@ -30,13 +30,14 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
     """Flypower LLM 调用适配器。
 
     当前插件只接入 OpenAI Chat Completions 兼容模型，所以主体能力直接复用
-    Dify SDK 的 OpenAI 兼容基类。这里保留少量适配逻辑：
+    Dify SDK 的 OpenAI 兼容基类。这里保留少量适配逻辑，用来处理不同上游
+    对“兼容 OpenAI”理解不完全一致的地方：
 
     - 固定走 chat 模式。
     - 默认使用新版工具调用 tool_call。
-    - 转换图片和文档输入。
+    - 转换图片、文档、音频、视频输入。
     - 统一使用 max_completion_tokens 参数。
-    - 按模型 YAML 可选适配 thinking 开关。
+    - 按模型 YAML 可选适配 thinking/reasoning 私有参数。
     - 用轻量请求校验供应商凭据。
 
     文档按 OpenAI Chat Completions 的原生 file content part 传递。
@@ -46,7 +47,13 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
     _THINK_PATTERN = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
 
     def _wrap_thinking_by_reasoning_content(self, delta: dict, is_reasoning: bool) -> tuple[str, bool]:
-        """把兼容端返回的 reasoning/reasoning_content 包成 Dify 可识别的 <think> 块。"""
+        """把上游 reasoning 字段转换成 Dify 能识别的思考块。
+
+        很多 OpenAI-compatible 网关不会直接流式输出 ``<think>``，而是把思考
+        token 放在 ``reasoning`` 或旧版 ``reasoning_content`` 字段里。Dify 后续
+        展示和过滤思考内容时识别的是 ``<think>...</think>``，所以这里在流式
+        响应阶段补上开始/结束标签。
+        """
         reasoning_piece = delta.get("reasoning") or delta.get("reasoning_content") or ""
         content_piece = delta.get("content") or ""
         output = ""
@@ -142,7 +149,21 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
         return normalized_parameters
 
     def _apply_thinking_parameters(self, model: str, model_parameters: dict) -> None:
-        """按模型 YAML 中的 extra.thinking 映射非标准思考参数。"""
+        """按模型 YAML 的 ``extra.thinking`` 映射非标准思考/推理参数。
+
+        这里不要按模型名字写硬编码分支，而是让每个 YAML 自己声明映射模式。
+        这样后面新增模型时，只需要在模型配置里选择对应模式：
+
+        - ``top_level``：上游直接接收 ``enable_thinking`` / ``thinking_budget``。
+        - ``deepseek`` / ``zhipu``：上游接收 ``thinking: {"type": "enabled"}``。
+        - ``gemini``：上游接收 ``thinking_config``。
+        - ``minimax``：上游接收 Anthropic 风格的 ``thinking.budget_tokens``。
+        - ``openrouter``：上游接收 ``reasoning`` 对象。
+        - ``chat_template_kwargs``：上游运行时从模板参数读取思考开关。
+
+        如果 YAML 没有声明 ``extra.thinking``，这里会移除 Dify 页面上可能带来的
+        thinking 参数，避免把未知私有参数发给不支持的模型。
+        """
         enable_thinking = model_parameters.pop("enable_thinking", None)
         thinking = model_parameters.pop("thinking", None)
         if enable_thinking is None:
@@ -155,22 +176,23 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
             return
 
         mode = thinking_config.get("mode", "none")
+        thinking_enabled: Optional[bool] = None
         if enable_thinking is not None:
-            enabled = bool(enable_thinking)
+            thinking_enabled = self._to_bool(enable_thinking)
             if mode == "top_level":
-                model_parameters["enable_thinking"] = enabled
+                model_parameters["enable_thinking"] = thinking_enabled
             elif mode == "deepseek":
-                model_parameters["thinking"] = {"type": "enabled" if enabled else "disabled"}
+                model_parameters["thinking"] = {"type": "enabled" if thinking_enabled else "disabled"}
             elif mode == "openrouter":
-                model_parameters.setdefault("reasoning", {})["enabled"] = enabled
+                model_parameters.setdefault("reasoning", {})["enabled"] = thinking_enabled
             elif mode == "zhipu":
-                model_parameters["thinking"] = {"type": "enabled" if enabled else "disabled"}
+                model_parameters["thinking"] = {"type": "enabled" if thinking_enabled else "disabled"}
             elif mode == "chat_template_kwargs":
                 template_kwargs = model_parameters.setdefault("chat_template_kwargs", {})
-                template_kwargs["enable_thinking"] = enabled
-                template_kwargs["thinking"] = enabled
+                template_kwargs["enable_thinking"] = thinking_enabled
+                template_kwargs["thinking"] = thinking_enabled
             elif mode == "minimax":
-                minimax_thinking = self._minimax_thinking_payload(enabled, thinking_budget)
+                minimax_thinking = self._minimax_thinking_payload(thinking_enabled, thinking_budget)
                 if minimax_thinking:
                     model_parameters["thinking"] = minimax_thinking
 
@@ -181,7 +203,7 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
                 model_parameters.setdefault("reasoning", {})["max_tokens"] = thinking_budget
             elif mode == "gemini":
                 model_parameters.setdefault("thinking_config", {})["thinking_budget"] = thinking_budget
-            elif mode == "minimax" and "thinking" not in model_parameters:
+            elif mode == "minimax" and thinking_enabled is not False and "thinking" not in model_parameters:
                 model_parameters["thinking"] = self._minimax_thinking_payload(True, thinking_budget)
 
         if thinking_level is not None:
@@ -207,8 +229,28 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
                 model_parameters.setdefault("reasoning", {})["effort"] = reasoning_effort
 
     @staticmethod
+    def _to_bool(value: object) -> bool:
+        """把 Dify 页面参数安全转换成布尔值。
+
+        正常情况下 Dify 会按 YAML 的 ``type: boolean`` 传入真正的 bool。但在
+        调试、脚本调用或不同 SDK 版本下，也可能收到 ``"false"``、``"0"``、
+        ``"disabled"`` 这类字符串。Python 的 ``bool("false")`` 会得到 True，
+        所以这里单独做一次归一化，避免思考开关被反向打开。
+        """
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() not in {"", "0", "false", "no", "off", "disabled"}
+        return bool(value)
+
+    @staticmethod
     def _minimax_thinking_payload(enabled: bool, thinking_budget: Optional[int]) -> Optional[dict]:
-        """构造 MiniMax Anthropic-compatible thinking 参数。"""
+        """构造 MiniMax Anthropic-compatible thinking 参数。
+
+        MiniMax 的 thinking 参数和普通布尔开关不同：开启时必须带
+        ``budget_tokens``，关闭时不发送 thinking 字段即可。这里强制最低 1024，
+        是因为 Anthropic-compatible thinking 通常要求预算不能太小。
+        """
         if not enabled:
             return None
         budget_tokens = max(1024, int(thinking_budget or 1024))
@@ -260,6 +302,15 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
 
         模型 YAML 声明对应能力后，Dify 才会传入图片或文档。
         这里只负责把已收到的内容转换成 OpenAI-compatible 请求结构。
+
+        这里沿用官方 openai_api_compatible 插件的形态：
+
+        - 图片：``image_url``。
+        - 视频/音频：仍放进 ``image_url.url``，由兼容网关按 data URI 识别。
+        - 文档：``file.file_data`` 直接使用 Dify SDK 提供的 data URI。
+
+        这段逻辑不判断模型是否真正支持某种模态；能力开关由模型 YAML 的
+        ``features`` 控制。这样可以把“模型能力声明”和“请求格式转换”分开。
         """
         if not isinstance(message, UserPromptMessage) or not isinstance(message.content, list):
             return super()._convert_prompt_message_to_dict(message, credentials)
@@ -314,7 +365,13 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
 
     @classmethod
     def _drop_analyze_channel(cls, prompt_messages: list[PromptMessage]) -> None:
-        """移除历史 assistant 消息里的思考内容，避免下一轮重复带回上下文。"""
+        """移除历史 assistant 消息里的思考内容。
+
+        Dify 会把上一轮 assistant 回复继续放进下一轮上下文。如果历史回复里
+        已经带有 ``<think>...</think>``，下一次请求会把旧思考链也发给模型，
+        既浪费 token，也容易污染下一轮回答。因此只在历史 assistant 文本里
+        做轻量清理，不改用户原始输入。
+        """
         for prompt_message in prompt_messages:
             if not isinstance(prompt_message, AssistantPromptMessage):
                 continue
@@ -326,7 +383,13 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
 
     @staticmethod
     def _apply_json_schema_prompt(model_parameters: dict, prompt_messages: list[PromptMessage]) -> None:
-        """把 Dify 的 json_schema 参数补成兼容端更容易遵循的系统提示。"""
+        """把 Dify 的 json_schema 参数补成兼容端更容易遵循的系统提示。
+
+        Dify 会把 ``response_format=json_schema`` 和 ``json_schema`` 传进模型
+        参数，但并不是每个 OpenAI-compatible 网关都原生支持这个字段。官方插件
+        也采用了向 system prompt 注入 schema 的兼容策略。这里保留原参数不删，
+        让原生支持 json_schema 的上游仍有机会使用，同时用系统提示兜底。
+        """
         if model_parameters.get("response_format") != "json_schema":
             return
 
