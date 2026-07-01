@@ -6,16 +6,19 @@ from urllib.parse import urljoin
 import requests
 import yaml
 
-from dify_plugin.entities.model.llm import LLMResult
+from dify_plugin.entities.model.llm import LLMMode, LLMResult
 from dify_plugin.entities.model.message import (
+    AssistantPromptMessage,
+    AudioPromptMessageContent,
     DocumentPromptMessageContent,
     ImagePromptMessageContent,
     PromptMessage,
     PromptMessageContentType,
     PromptMessageTool,
     UserPromptMessage,
+    VideoPromptMessageContent,
 )
-from dify_plugin.errors.model import CredentialsValidateFailedError
+from dify_plugin.errors.model import CredentialsValidateFailedError, InvokeError
 from dify_plugin.interfaces.model.openai_compatible.llm import OAICompatLargeLanguageModel
 
 
@@ -35,6 +38,31 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
     文档按 OpenAI Chat Completions 的原生 file content part 传递。
     插件不把文档解码成普通文本，避免伪装成模型原生文档能力。
     """
+
+    def _wrap_thinking_by_reasoning_content(self, delta: dict, is_reasoning: bool) -> tuple[str, bool]:
+        """把兼容端返回的 reasoning/reasoning_content 包成 Dify 可识别的 <think> 块。"""
+        reasoning_piece = delta.get("reasoning") or delta.get("reasoning_content") or ""
+        content_piece = delta.get("content") or ""
+        output = ""
+
+        if reasoning_piece:
+            if not is_reasoning:
+                output += f"<think>\n{reasoning_piece}"
+                is_reasoning = True
+            else:
+                output += str(reasoning_piece)
+
+        if is_reasoning:
+            if not reasoning_piece and not content_piece:
+                is_reasoning = False
+                output += "\n</think>"
+            if content_piece:
+                is_reasoning = False
+                output += f"\n</think>{content_piece}"
+        elif content_piece:
+            output += content_piece
+
+        return output, is_reasoning
 
     def _normalize_credentials(self, model: str, credentials: dict) -> dict:
         """补齐运行时凭据默认值。
@@ -245,6 +273,22 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
                         },
                     }
                 )
+            elif content.type == PromptMessageContentType.VIDEO:
+                video_content: VideoPromptMessageContent = content
+                content_parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": video_content.data},
+                    }
+                )
+            elif content.type == PromptMessageContentType.AUDIO:
+                audio_content: AudioPromptMessageContent = content
+                content_parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": audio_content.data},
+                    }
+                )
             elif content.type == PromptMessageContentType.DOCUMENT:
                 document_content: DocumentPromptMessageContent = content
                 content_parts.append(
@@ -282,6 +326,67 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
             stop=stop,
             stream=stream,
             user=user,
+        )
+
+    def _handle_generate_response(
+        self,
+        model: str,
+        credentials: dict,
+        response: requests.Response,
+        prompt_messages: list[PromptMessage],
+    ) -> LLMResult:
+        """处理非流式响应里 tool_calls 存在但 message.content 缺失的兼容端返回。"""
+        response_json: dict = response.json()
+        completion_type = LLMMode.value_of(credentials["mode"])
+        choices = response_json.get("choices") or []
+        if not choices:
+            raise InvokeError("LLM response returned no choices")
+
+        output = choices[0]
+        message_id = response_json.get("id")
+        response_content = ""
+        tool_calls = None
+        function_calling_type = credentials.get("function_calling_type", "no_call")
+
+        if completion_type is LLMMode.CHAT:
+            message = output.get("message") or {}
+            raw_content = message.get("content")
+            if isinstance(raw_content, str):
+                response_content = raw_content
+            elif raw_content is None:
+                response_content = ""
+            else:
+                response_content = str(raw_content)
+
+            if function_calling_type == "tool_call":
+                tool_calls = message.get("tool_calls")
+            elif function_calling_type == "function_call":
+                tool_calls = message.get("function_call")
+        elif completion_type is LLMMode.COMPLETION:
+            raw_text = output.get("text", "")
+            response_content = raw_text if isinstance(raw_text, str) else str(raw_text or "")
+
+        assistant_message = AssistantPromptMessage(content=response_content, tool_calls=[])
+        if tool_calls:
+            if function_calling_type == "tool_call":
+                assistant_message.tool_calls = self._extract_response_tool_calls(tool_calls)
+            elif function_calling_type == "function_call":
+                function_call = self._extract_response_function_call(tool_calls)
+                assistant_message.tool_calls = [function_call] if function_call else []
+
+        usage = response_json.get("usage")
+        if usage:
+            prompt_tokens = usage["prompt_tokens"]
+            completion_tokens = usage["completion_tokens"]
+        else:
+            prompt_tokens = self._num_tokens_from_messages(prompt_messages, credentials=credentials)
+            completion_tokens = self._num_tokens_from_string(assistant_message.content or "")
+
+        return LLMResult(
+            id=message_id,
+            model=response_json.get("model", model),
+            message=assistant_message,
+            usage=self._calc_response_usage(model, credentials, prompt_tokens, completion_tokens),
         )
 
     @classmethod

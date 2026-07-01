@@ -72,11 +72,13 @@ GET {API 地址}/models
 页面仍可能显示全部预定义模型；调用缺失模型时，上游会返回错误。若要按
 key 动态只展示可用模型，需要改成动态模型/自定义模型方案。
 
-## 图片和文档输入
+## 多模态输入
 
 模型 YAML 可以通过 `features` 声明支持：
 
 - `vision`：图片
+- `video`：视频
+- `audio`：音频
 - `document`：文档
 
 文档会转换成 OpenAI Chat Completions 原生文件输入格式：
@@ -95,6 +97,20 @@ key 动态只展示可用模型，需要改成动态模型/自定义模型方案
 插件不解析文档、不抽取文本、不把文件正文拼进 prompt。
 如果某个上游模型不支持文档输入，删除对应模型 YAML 里的 `document` 即可。
 
+视频和音频会按 OpenAI-compatible 聚合端常见写法放入：
+
+```json
+{
+  "type": "image_url",
+  "image_url": {
+    "url": "data:video/mp4;base64,..."
+  }
+}
+```
+
+如果上游模型或聚合端不支持视频/音频输入，删除对应模型 YAML 里的
+`video` 或 `audio` 即可。
+
 ## 开发约定
 
 - 新增模型时，优先新增 `models/llm/*.yaml` 文件。
@@ -105,19 +121,24 @@ key 动态只展示可用模型，需要改成动态模型/自定义模型方案
 ## 推理与思考参数
 
 - `agent-thought` 只声明模型支持思考/推理内容展示，不会额外向上游发送私有参数。
-- `reasoning_effort` 是 OpenAI 风格参数，模型 YAML 里声明后会直接透传给上游。
-- `enable_thinking` 属于非标准参数，默认会被插件丢弃，避免不支持的模型报错。
-- 如果某个模型确实需要 thinking 开关，在该模型 YAML 里增加：
+- `reasoning_effort` 是 OpenAI 风格参数，模型 YAML 里声明后会按模型配置透传或映射。
+- `enable_thinking`、`thinking`、`thinking_budget`、`thinking_level`、`include_thoughts`
+  都是非标准参数，只有模型 YAML 显式声明 `extra.thinking.mode` 时才会发送。
+- 如果某个模型确实需要 thinking 开关，在该模型 YAML 里增加 `extra.thinking`：
 
 ```yaml
 extra:
   thinking:
-    mode: zhipu
+    mode: top_level
 ```
 
 当前支持的 `mode`：
 
 - `top_level`：发送 `enable_thinking: true/false`
+- `deepseek`：发送 `thinking: {"type": "enabled"|"disabled"}`
+- `gemini`：发送 `thinking_config.thinking_budget`、`thinking_config.thinking_level`、`thinking_config.include_thoughts`
+- `minimax`：发送 `thinking: {"type": "enabled", "budget_tokens": N}`
+- `openrouter`：发送 `reasoning.enabled`、`reasoning.max_tokens`、`reasoning.effort`、`reasoning.exclude`
 - `zhipu`：发送 `thinking: {"type": "enabled"|"disabled"}`
 - `chat_template_kwargs`：发送 `chat_template_kwargs.enable_thinking` 和 `chat_template_kwargs.thinking`
 
@@ -129,3 +150,25 @@ extra:
     mode: chat_template_kwargs
     reasoning_effort_target: chat_template_kwargs
 ```
+
+当前模型配置大致分组：
+
+- `gpt-5.*`：`reasoning_effort`
+- `deepseek-v4-*`：`thinking`、`reasoning_effort`
+- `gemini-2.5-*`：`thinking_budget`、`include_thoughts`
+- `gemini-3*`：`thinking_level`、`include_thoughts`
+- `qwen3*`、`glm-5*`、`kimi-k2.5`：`enable_thinking`、`thinking_budget`
+- `minimax-m2.5`、`MiniMax-M2.7`：`enable_thinking`、`thinking_budget`
+
+如果上游流式响应里返回 `reasoning` 或 `reasoning_content` 字段，
+插件会包装为：
+
+```text
+<think>
+...
+</think>
+```
+
+这样 Dify 可以按思考内容处理和展示。非流式响应里，如果模型返回
+`tool_calls` 但省略 `message.content`，插件会把 content 当作空字符串处理，
+避免兼容端触发 `KeyError('content')`。
