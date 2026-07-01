@@ -46,7 +46,7 @@ parameter_rules:
   label:
     en_US: Reasoning Effort
     zh_Hans: 思考强度
-  type: select
+  type: string
   default: high
   required: false
   options:

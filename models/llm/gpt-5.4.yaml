@@ -38,7 +38,7 @@ parameter_rules:
   label:
     en_US: Reasoning effort
     zh_Hans: 推理强度
-  type: select
+  type: string
   required: false
   options:
   - none
