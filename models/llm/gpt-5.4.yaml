@@ -51,3 +51,5 @@ pricing:
   output: '15.00'
   unit: '0.000001'
   currency: USD
+extra:
+  token_param_name: max_completion_tokens

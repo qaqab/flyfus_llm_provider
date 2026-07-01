@@ -45,6 +45,46 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
     """
 
     _THINK_PATTERN = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
+    _GEO_PROMPT_REFERENCE_PATTERN = re.compile(
+        r"\{\{geo_prompt:[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+@[A-Za-z0-9_-]+}}"
+    )
+    _GEO_PROMPT_RENDER_URL = "https://geo.dev.vocscope.com/api/geo/v2/dify_prompt/render"
+    _GEO_PROMPT_API_KEY = "test_dify_1780389317_af8ade862225"
+
+    @classmethod
+    def _render_geo_prompt_text(cls, text: str) -> str:
+        """渲染一段包含 Geo Prompt 引用的文本。"""
+        if not cls._GEO_PROMPT_REFERENCE_PATTERN.search(text):
+            return text
+
+        try:
+            response = requests.post(
+                cls._GEO_PROMPT_RENDER_URL,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {cls._GEO_PROMPT_API_KEY}",
+                },
+                json={"text": text},
+                timeout=(10, 60),
+            )
+        except Exception as error:
+            raise InvokeError(f"Geo Prompt 渲染请求失败：{error}") from error
+
+        if response.status_code != 200:
+            raise InvokeError(
+                f"Geo Prompt 渲染失败，状态码：{response.status_code}，响应：{response.text}"
+            )
+
+        try:
+            payload = response.json()
+        except ValueError as error:
+            raise InvokeError("Geo Prompt 渲染接口返回的不是 JSON。") from error
+
+        rendered_text = payload.get("data", {}).get("rendered_text")
+        if not isinstance(rendered_text, str):
+            raise InvokeError("Geo Prompt 渲染接口返回格式缺少 data.rendered_text。")
+
+        return rendered_text
 
     def _wrap_thinking_by_reasoning_content(self, delta: dict, is_reasoning: bool) -> tuple[str, bool]:
         """把上游 reasoning 字段转换成 Dify 能识别的思考块。
@@ -135,18 +175,31 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
     def _normalize_model_parameters(self, model: str, model_parameters: dict) -> dict:
         """整理模型调用参数。
 
-        Dify 页面上使用 max_tokens 这个通用参数名。调用上游时统一转换为
-        max_completion_tokens，保持请求参数一致。
+        Dify 页面上使用 max_tokens 这个通用参数名。默认继续发送 max_tokens；
+        只有模型配置明确要求时，才转换为 max_completion_tokens。
         """
         normalized_parameters = dict(model_parameters)
         if (
-            "max_completion_tokens" not in normalized_parameters
+            self._token_param_name(model) == "max_completion_tokens"
+            and "max_completion_tokens" not in normalized_parameters
             and "max_tokens" in normalized_parameters
         ):
             normalized_parameters["max_completion_tokens"] = normalized_parameters.pop("max_tokens")
 
         self._apply_thinking_parameters(model, normalized_parameters)
         return normalized_parameters
+
+    @classmethod
+    def _token_param_name(cls, model: str) -> str:
+        """选择上游 token 上限参数名。
+
+        可在模型 YAML 中通过 ``extra.token_param_name`` 显式配置：
+        ``max_tokens`` 或 ``max_completion_tokens``。未配置时保持 max_tokens。
+        """
+        configured_name = cls._load_model_extra(model).get("token_param_name")
+        if configured_name in {"max_tokens", "max_completion_tokens"}:
+            return configured_name
+        return "max_tokens"
 
     def _apply_thinking_parameters(self, model: str, model_parameters: dict) -> None:
         """按模型 YAML 的 ``extra.thinking`` 映射非标准思考/推理参数。
@@ -276,9 +329,9 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
         request_body = {
             "model": validation_model,
             "messages": [{"role": "user", "content": "ping"}],
-            "max_completion_tokens": 16,
             "stream": False,
         }
+        request_body[self._token_param_name(validation_model)] = 16
 
         try:
             response = requests.post(
@@ -412,6 +465,16 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
         else:
             prompt_messages.insert(0, SystemPromptMessage(content=structured_output_prompt))
 
+    @classmethod
+    def _render_geo_prompt_references(cls, prompt_messages: list[PromptMessage]) -> None:
+        """渲染 system prompt 中的 Geo Prompt 引用。"""
+        for prompt_message in prompt_messages:
+            if prompt_message.role != PromptMessageRole.SYSTEM:
+                continue
+            if not isinstance(prompt_message.content, str):
+                continue
+            prompt_message.content = cls._render_geo_prompt_text(prompt_message.content)
+
     def _invoke(
         self,
         model: str,
@@ -423,13 +486,15 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
         stream: bool = True,
         user: Optional[str] = None,
     ) -> Union[LLMResult, Generator]:
+        normalized_credentials = self._normalize_credentials(model, credentials)
+        self._render_geo_prompt_references(prompt_messages)
         self._apply_json_schema_prompt(model_parameters, prompt_messages)
         with suppress(Exception):
             self._drop_analyze_channel(prompt_messages)
 
         return super()._invoke(
             model=model,
-            credentials=self._normalize_credentials(model, credentials),
+            credentials=normalized_credentials,
             prompt_messages=prompt_messages,
             model_parameters=self._normalize_model_parameters(model, model_parameters),
             tools=tools,
