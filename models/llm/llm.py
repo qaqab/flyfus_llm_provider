@@ -28,7 +28,7 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
     - 固定走 chat 模式。
     - 默认使用新版工具调用 tool_call。
     - 转换图片和文档输入。
-    - 为 GPT 5 系列使用 max_completion_tokens 参数。
+    - 统一使用 max_completion_tokens 参数。
     - 用轻量请求校验供应商凭据。
 
     文档按 OpenAI Chat Completions 的原生 file content part 传递。
@@ -90,20 +90,16 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
                 model_ids.add(item["id"])
         return model_ids
 
-    def _uses_max_completion_tokens(self, model: str) -> bool:
-        """判断当前模型是否需要 OpenAI 新版 token 参数。"""
-        return model.lower().startswith("gpt-5")
-
     def _normalize_model_parameters(self, model: str, model_parameters: dict) -> dict:
         """整理模型调用参数。
 
-        Dify 页面上使用 max_tokens 这个通用参数名。GPT 5 系列使用
-        max_completion_tokens，其他 OpenAI-compatible 模型保留 max_tokens。
+        Dify 页面上使用 max_tokens 这个通用参数名。调用上游时统一转换为
+        max_completion_tokens，保持请求参数一致。
         """
+        del model
         normalized_parameters = dict(model_parameters)
         if (
-            self._uses_max_completion_tokens(model)
-            and "max_completion_tokens" not in normalized_parameters
+            "max_completion_tokens" not in normalized_parameters
             and "max_tokens" in normalized_parameters
         ):
             normalized_parameters["max_completion_tokens"] = normalized_parameters.pop("max_tokens")
@@ -126,11 +122,10 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
         validation_model = model if model in matched_models else sorted(matched_models)[0]
         request_url = self._endpoint_url(normalized_credentials, "chat/completions")
 
-        token_parameter = "max_completion_tokens" if self._uses_max_completion_tokens(validation_model) else "max_tokens"
         request_body = {
             "model": validation_model,
             "messages": [{"role": "user", "content": "ping"}],
-            token_parameter: 16,
+            "max_completion_tokens": 16,
             "stream": False,
         }
 
