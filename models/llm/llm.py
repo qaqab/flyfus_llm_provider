@@ -29,6 +29,7 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
     - 默认使用新版工具调用 tool_call。
     - 转换图片和文档输入。
     - 统一使用 max_completion_tokens 参数。
+    - 按模型 YAML 可选适配 thinking 开关。
     - 用轻量请求校验供应商凭据。
 
     文档按 OpenAI Chat Completions 的原生 file content part 传递。
@@ -96,14 +97,88 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
         Dify 页面上使用 max_tokens 这个通用参数名。调用上游时统一转换为
         max_completion_tokens，保持请求参数一致。
         """
-        del model
         normalized_parameters = dict(model_parameters)
         if (
             "max_completion_tokens" not in normalized_parameters
             and "max_tokens" in normalized_parameters
         ):
             normalized_parameters["max_completion_tokens"] = normalized_parameters.pop("max_tokens")
+
+        self._apply_thinking_parameters(model, normalized_parameters)
         return normalized_parameters
+
+    def _apply_thinking_parameters(self, model: str, model_parameters: dict) -> None:
+        """按模型 YAML 中的 extra.thinking 映射非标准思考参数。"""
+        enable_thinking = model_parameters.pop("enable_thinking", None)
+        thinking = model_parameters.pop("thinking", None)
+        if enable_thinking is None:
+            enable_thinking = thinking
+        thinking_budget = model_parameters.pop("thinking_budget", None)
+        thinking_level = model_parameters.pop("thinking_level", None)
+        include_thoughts = model_parameters.pop("include_thoughts", None)
+        thinking_config = self._load_model_extra(model).get("thinking", {})
+        if not isinstance(thinking_config, dict):
+            return
+
+        mode = thinking_config.get("mode", "none")
+        if enable_thinking is not None:
+            enabled = bool(enable_thinking)
+            if mode == "top_level":
+                model_parameters["enable_thinking"] = enabled
+            elif mode == "deepseek":
+                model_parameters["thinking"] = {"type": "enabled" if enabled else "disabled"}
+            elif mode == "openrouter":
+                model_parameters.setdefault("reasoning", {})["enabled"] = enabled
+            elif mode == "zhipu":
+                model_parameters["thinking"] = {"type": "enabled" if enabled else "disabled"}
+            elif mode == "chat_template_kwargs":
+                template_kwargs = model_parameters.setdefault("chat_template_kwargs", {})
+                template_kwargs["enable_thinking"] = enabled
+                template_kwargs["thinking"] = enabled
+            elif mode == "minimax":
+                minimax_thinking = self._minimax_thinking_payload(enabled, thinking_budget)
+                if minimax_thinking:
+                    model_parameters["thinking"] = minimax_thinking
+
+        if thinking_budget is not None:
+            if mode == "top_level":
+                model_parameters["thinking_budget"] = thinking_budget
+            elif mode == "openrouter":
+                model_parameters.setdefault("reasoning", {})["max_tokens"] = thinking_budget
+            elif mode == "gemini":
+                model_parameters.setdefault("thinking_config", {})["thinking_budget"] = thinking_budget
+            elif mode == "minimax" and "thinking" not in model_parameters:
+                model_parameters["thinking"] = self._minimax_thinking_payload(True, thinking_budget)
+
+        if thinking_level is not None:
+            if mode == "gemini":
+                model_parameters.setdefault("thinking_config", {})["thinking_level"] = thinking_level
+            elif mode == "openrouter":
+                model_parameters.setdefault("reasoning", {})["effort"] = str(thinking_level).lower()
+
+        if include_thoughts is not None and mode == "gemini":
+            model_parameters.setdefault("thinking_config", {})["include_thoughts"] = bool(include_thoughts)
+
+        exclude_reasoning_tokens = model_parameters.pop("exclude_reasoning_tokens", None)
+        if exclude_reasoning_tokens is not None and mode == "openrouter":
+            model_parameters.setdefault("reasoning", {})["exclude"] = bool(exclude_reasoning_tokens)
+
+        if thinking_config.get("reasoning_effort_target") == "chat_template_kwargs":
+            reasoning_effort = model_parameters.get("reasoning_effort")
+            if reasoning_effort is not None:
+                model_parameters.setdefault("chat_template_kwargs", {})["reasoning_effort"] = reasoning_effort
+        elif mode == "openrouter":
+            reasoning_effort = model_parameters.pop("reasoning_effort", None)
+            if reasoning_effort in {"high", "medium", "low", "minimal", "none"}:
+                model_parameters.setdefault("reasoning", {})["effort"] = reasoning_effort
+
+    @staticmethod
+    def _minimax_thinking_payload(enabled: bool, thinking_budget: Optional[int]) -> Optional[dict]:
+        """构造 MiniMax Anthropic-compatible thinking 参数。"""
+        if not enabled:
+            return None
+        budget_tokens = max(1024, int(thinking_budget or 1024))
+        return {"type": "enabled", "budget_tokens": budget_tokens}
 
     def validate_credentials(self, model: str, credentials: dict) -> None:
         """校验供应商凭据。
@@ -213,13 +288,8 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
     @lru_cache(maxsize=1)
     def _load_predefined_chat_models(cls) -> set[str]:
         """从模型 YAML 读取预定义聊天模型名，避免 Python 列表和 YAML 重复维护。"""
-        models_dir = Path(__file__).resolve().parent
         model_names: set[str] = set()
-        for model_file in models_dir.glob("*.yaml"):
-            if model_file.name.startswith("_"):
-                continue
-            with model_file.open("r", encoding="utf-8") as file:
-                payload = yaml.safe_load(file) or {}
+        for payload in cls._load_model_configs().values():
             if (
                 payload.get("model_type") == "llm"
                 and payload.get("model_properties", {}).get("mode") == "chat"
@@ -228,3 +298,25 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
                 if isinstance(model_name, str) and model_name:
                     model_names.add(model_name)
         return model_names
+
+    @classmethod
+    @lru_cache(maxsize=1)
+    def _load_model_configs(cls) -> dict[str, dict]:
+        """按模型名读取全部模型 YAML 配置。"""
+        models_dir = Path(__file__).resolve().parent
+        configs: dict[str, dict] = {}
+        for model_file in models_dir.glob("*.yaml"):
+            if model_file.name.startswith("_"):
+                continue
+            with model_file.open("r", encoding="utf-8") as file:
+                payload = yaml.safe_load(file) or {}
+            model_name = payload.get("model")
+            if isinstance(model_name, str) and model_name:
+                configs[model_name] = payload
+        return configs
+
+    @classmethod
+    def _load_model_extra(cls, model: str) -> dict:
+        """读取模型 YAML 的 extra 配置。"""
+        extra = cls._load_model_configs().get(model, {}).get("extra", {})
+        return extra if isinstance(extra, dict) else {}

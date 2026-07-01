@@ -15,6 +15,7 @@
 - 图片和文档能力由各模型 YAML 的 `features` 声明控制。
 - 文档只走 OpenAI Chat Completions 原生 `file_data` 协议，不做插件内抽文本兜底。
 - 支持 Dify 结构化输出参数：`response_format`、`json_schema`。
+- 支持 `reasoning_effort` 推理强度参数；非标准 thinking 开关按模型 YAML 显式配置。
 
 ## 预设模型
 
@@ -101,3 +102,30 @@ key 动态只展示可用模型，需要改成动态模型/自定义模型方案
 - 如果模型不支持原生 `json_schema`，后续可以按模型增加结构化输出策略。
 - 注释、报错和文档使用中文；代码标识符使用英文。
 
+## 推理与思考参数
+
+- `agent-thought` 只声明模型支持思考/推理内容展示，不会额外向上游发送私有参数。
+- `reasoning_effort` 是 OpenAI 风格参数，模型 YAML 里声明后会直接透传给上游。
+- `enable_thinking` 属于非标准参数，默认会被插件丢弃，避免不支持的模型报错。
+- 如果某个模型确实需要 thinking 开关，在该模型 YAML 里增加：
+
+```yaml
+extra:
+  thinking:
+    mode: zhipu
+```
+
+当前支持的 `mode`：
+
+- `top_level`：发送 `enable_thinking: true/false`
+- `zhipu`：发送 `thinking: {"type": "enabled"|"disabled"}`
+- `chat_template_kwargs`：发送 `chat_template_kwargs.enable_thinking` 和 `chat_template_kwargs.thinking`
+
+如果某个模型还要求把 `reasoning_effort` 同步写入 `chat_template_kwargs`：
+
+```yaml
+extra:
+  thinking:
+    mode: chat_template_kwargs
+    reasoning_effort_target: chat_template_kwargs
+```

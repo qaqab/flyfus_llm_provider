@@ -4,12 +4,12 @@ label:
   en_US: gemini-2.5-pro
 model_type: llm
 features:
-  - agent-thought
-  - vision
-  - document
-  - tool-call
-  - multi-tool-call
-  - stream-tool-call
+- agent-thought
+- vision
+- document
+- tool-call
+- multi-tool-call
+- stream-tool-call
 model_properties:
   mode: chat
   context_size: 1048576
@@ -34,8 +34,33 @@ parameter_rules:
   - json_schema
 - name: json_schema
   use_template: json_schema
+- name: thinking_budget
+  label:
+    en_US: Thinking Budget
+    zh_Hans: 推理预算
+  type: int
+  default: 1024
+  min: 0
+  max: 24576
+  required: false
+  help:
+    zh_Hans: 推理预算限制；不设置时模型会按请求复杂度自动调整。
+    en_US: Budget limit for thinking; if not set, the model adjusts automatically.
+- name: include_thoughts
+  type: boolean
+  required: false
+  default: false
+  label:
+    en_US: Include Thoughts
+    zh_Hans: 返回思考过程
+  help:
+    zh_Hans: 是否返回思考过程。只有模型支持且开启思考时才会返回。
+    en_US: Whether to include thoughts when the model supports and uses thinking.
 pricing:
   input: '0'
   output: '0'
   unit: '0.000001'
   currency: USD
+extra:
+  thinking:
+    mode: gemini

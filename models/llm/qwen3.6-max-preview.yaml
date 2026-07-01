@@ -4,10 +4,10 @@ label:
   en_US: qwen3.6-max-preview
 model_type: llm
 features:
-  - agent-thought
-  - tool-call
-  - multi-tool-call
-  - stream-tool-call
+- agent-thought
+- tool-call
+- multi-tool-call
+- stream-tool-call
 model_properties:
   mode: chat
   context_size: 1000000
@@ -32,8 +32,34 @@ parameter_rules:
   - json_schema
 - name: json_schema
   use_template: json_schema
+- name: enable_thinking
+  required: false
+  type: boolean
+  default: true
+  label:
+    en_US: Thinking mode
+    zh_Hans: 思考模式
+  help:
+    zh_Hans: 是否开启思考模式。
+    en_US: Whether to enable thinking mode.
+- name: thinking_budget
+  required: false
+  type: int
+  default: 4096
+  min: 1
+  max: 262144
+  label:
+    en_US: Thinking budget
+    zh_Hans: 思考长度限制
+  help:
+    zh_Hans: 思考过程的最大长度，只在思考模式开启时生效。
+    en_US: The maximum length of the thinking process, only effective when thinking
+      mode is enabled.
 pricing:
   input: '0'
   output: '0'
   unit: '0.000001'
   currency: USD
+extra:
+  thinking:
+    mode: top_level

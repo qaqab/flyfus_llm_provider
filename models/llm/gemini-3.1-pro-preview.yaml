@@ -4,12 +4,12 @@ label:
   en_US: gemini-3.1-pro-preview
 model_type: llm
 features:
-  - agent-thought
-  - vision
-  - document
-  - tool-call
-  - multi-tool-call
-  - stream-tool-call
+- agent-thought
+- vision
+- document
+- tool-call
+- multi-tool-call
+- stream-tool-call
 model_properties:
   mode: chat
   context_size: 1048576
@@ -34,8 +34,36 @@ parameter_rules:
   - json_schema
 - name: json_schema
   use_template: json_schema
+- name: thinking_level
+  label:
+    en_US: Thinking Level
+    zh_Hans: 思考层级
+  type: string
+  default: High
+  options:
+  - Minimal
+  - Low
+  - Medium
+  - High
+  required: false
+  help:
+    zh_Hans: 控制模型推理深度。Gemini 3 默认 High。
+    en_US: Controls the model reasoning depth. Gemini 3 defaults to High.
+- name: include_thoughts
+  type: boolean
+  required: false
+  default: false
+  label:
+    en_US: Include Thoughts
+    zh_Hans: 返回思考过程
+  help:
+    zh_Hans: 是否返回思考过程。只有模型支持且开启思考时才会返回。
+    en_US: Whether to include thoughts when the model supports and uses thinking.
 pricing:
   input: '0'
   output: '0'
   unit: '0.000001'
   currency: USD
+extra:
+  thinking:
+    mode: gemini

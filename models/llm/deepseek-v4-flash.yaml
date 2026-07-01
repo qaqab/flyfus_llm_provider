@@ -4,10 +4,10 @@ label:
   en_US: deepseek-v4-flash
 model_type: llm
 features:
-  - agent-thought
-  - tool-call
-  - multi-tool-call
-  - stream-tool-call
+- agent-thought
+- tool-call
+- multi-tool-call
+- stream-tool-call
 model_properties:
   mode: chat
   context_size: 1000000
@@ -32,8 +32,34 @@ parameter_rules:
   - json_schema
 - name: json_schema
   use_template: json_schema
+- name: thinking
+  label:
+    en_US: Thinking Mode
+    zh_Hans: 思考模式
+  type: boolean
+  default: true
+  required: false
+  help:
+    zh_Hans: 控制是否启用 DeepSeek v4 的思考模式。
+    en_US: Controls whether DeepSeek v4 thinking mode is enabled.
+- name: reasoning_effort
+  label:
+    en_US: Reasoning Effort
+    zh_Hans: 思考强度
+  type: string
+  default: high
+  required: false
+  options:
+  - high
+  - max
+  help:
+    zh_Hans: 控制思考模式下的推理强度。
+    en_US: Controls reasoning effort in thinking mode.
 pricing:
   input: '0'
   output: '0'
   unit: '0.000001'
   currency: USD
+extra:
+  thinking:
+    mode: deepseek
