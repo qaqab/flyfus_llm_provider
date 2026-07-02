@@ -25,6 +25,10 @@ from dify_plugin.entities.model.message import (
 from dify_plugin.errors.model import CredentialsValidateFailedError, InvokeError
 from dify_plugin.interfaces.model.openai_compatible.llm import OAICompatLargeLanguageModel
 
+from models.llm.native.base import has_document, model_family
+from models.llm.native.gemini import GeminiNativeDocumentAdapter
+from models.llm.native.openai_responses import OpenAIResponsesDocumentAdapter
+
 
 class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
     """Flypower LLM 调用适配器。
@@ -40,10 +44,11 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
     - 按模型 YAML 可选适配 thinking/reasoning 私有参数。
     - 用轻量请求校验供应商凭据。
 
-    文档按 OpenAI Chat Completions 的原生 file content part 传递。
-    插件不把文档解码成普通文本，避免伪装成模型原生文档能力。
+    文档统一走 OpenAI-compatible Responses 文件输入；普通请求继续走
+    OpenAI-compatible Chat 结构。Gemini 原生文件接口由插件内部常量控制。
     """
 
+    _USE_GEMINI_NATIVE_FILE_API = False
     _THINK_PATTERN = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
     _GEO_PROMPT_REFERENCE_PATTERN = re.compile(
         r"\{\{geo_prompt:[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+@[A-Za-z0-9_-]+}}"
@@ -416,6 +421,22 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
             message_dict["name"] = message.name
         return message_dict
 
+    def _openai_responses_adapter(self) -> OpenAIResponsesDocumentAdapter:
+        return OpenAIResponsesDocumentAdapter(
+            endpoint_url=self._endpoint_url,
+            request_headers=self._request_headers,
+            normalize_model_parameters=self._normalize_model_parameters,
+            calc_response_usage=self._calc_response_usage,
+            create_final_chunk=self._create_final_llm_result_chunk,
+        )
+
+    def _gemini_native_adapter(self) -> GeminiNativeDocumentAdapter:
+        return GeminiNativeDocumentAdapter(
+            endpoint_url=self._endpoint_url,
+            normalize_model_parameters=self._normalize_model_parameters,
+            calc_response_usage=self._calc_response_usage,
+        )
+
     @classmethod
     def _drop_analyze_channel(cls, prompt_messages: list[PromptMessage]) -> None:
         """移除历史 assistant 消息里的思考内容。
@@ -491,6 +512,31 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
         self._apply_json_schema_prompt(model_parameters, prompt_messages)
         with suppress(Exception):
             self._drop_analyze_channel(prompt_messages)
+
+        if has_document(prompt_messages):
+            family = model_family(model)
+            if family == "gemini" and self._USE_GEMINI_NATIVE_FILE_API:
+                return self._gemini_native_adapter().invoke(
+                    model=model,
+                    credentials=normalized_credentials,
+                    prompt_messages=prompt_messages,
+                    model_parameters=model_parameters,
+                    tools=tools,
+                    stop=stop,
+                    stream=stream,
+                    user=user,
+                )
+            if family in {"openai_responses", "gemini"}:
+                return self._openai_responses_adapter().invoke(
+                    model=model,
+                    credentials=normalized_credentials,
+                    prompt_messages=prompt_messages,
+                    model_parameters=model_parameters,
+                    tools=tools,
+                    stop=stop,
+                    stream=stream,
+                    user=user,
+                )
 
         return super()._invoke(
             model=model,

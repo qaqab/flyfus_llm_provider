@@ -1,4 +1,4 @@
-version: 0.0.21
+version: 0.0.23
 type: plugin
 author: "flypower"
 name: "flypower_llm_provider"
@@ -20,7 +20,7 @@ plugins:
   models:
     - "provider/flypower_llm_provider.yaml"
 meta:
-  version: 0.0.21
+  version: 0.0.23
   arch:
     - "amd64"
     - "arm64"
