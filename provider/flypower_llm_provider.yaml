@@ -1,4 +1,5 @@
 provider: flypower_llm_provider
+author: qaqab
 label:
   en_US: Flypower LLM Provider
   zh_Hans: Flypower 大模型供应商

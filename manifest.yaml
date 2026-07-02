@@ -1,6 +1,6 @@
 version: 0.0.23
 type: plugin
-author: "flypower"
+author: "qaqab"
 name: "flypower_llm_provider"
 description:
   en_US: Flypower LLM provider for OpenAI-compatible model endpoints.
