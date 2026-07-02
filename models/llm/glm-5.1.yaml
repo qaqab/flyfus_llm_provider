@@ -35,7 +35,7 @@ parameter_rules:
 - name: enable_thinking
   required: false
   type: boolean
-  default: true
+  default: false
   label:
     en_US: Thinking mode
     zh_Hans: 思考模式
