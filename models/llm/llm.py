@@ -25,6 +25,7 @@ from dify_plugin.entities.model.message import (
 from dify_plugin.errors.model import CredentialsValidateFailedError, InvokeError
 from dify_plugin.interfaces.model.openai_compatible.llm import OAICompatLargeLanguageModel
 
+from models.llm.agent_image_context import inject_image_context_from_tool_messages
 from models.llm.native.base import has_document, model_family
 from models.llm.native.gemini import GeminiNativeDocumentAdapter
 from models.llm.native.openai_responses import OpenAIResponsesDocumentAdapter
@@ -508,6 +509,7 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
         user: Optional[str] = None,
     ) -> Union[LLMResult, Generator]:
         normalized_credentials = self._normalize_credentials(model, credentials)
+        inject_image_context_from_tool_messages(prompt_messages)
         self._render_geo_prompt_references(prompt_messages)
         self._apply_json_schema_prompt(model_parameters, prompt_messages)
         with suppress(Exception):

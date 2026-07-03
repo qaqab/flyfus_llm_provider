@@ -16,6 +16,23 @@
 - 文档只走 OpenAI Chat Completions 原生 `file_data` 协议，不做插件内抽文本兜底。
 - 支持 Dify 结构化输出参数：`response_format`、`json_schema`。
 - 支持 `reasoning_effort` 推理强度参数；非标准 thinking 开关按模型 YAML 显式配置。
+- 支持 Agent 工具返回的图片 URL 上下文协议，只在工具返回固定协议时注入图片输入。
+
+## 0.0.25 更新内容
+
+- 新增 Agent 图片 URL 上下文协议支持：识别 `image_context_refresher` 工具返回的
+  `<DIFY_IMAGE_CONTEXT>...</DIFY_IMAGE_CONTEXT>`。
+- 支持单张图片和多张图片：`url`、`image_ref`、`image_refs`、`images` 列表都可以解析。
+- 支持工具输入里的多种 URL 写法：单个 URL、多行 URL、逗号分隔 URL、JSON URL 列表、
+  JSON 对象数组、Markdown 链接。
+- 插件会把解析到的图片 URL 注入为 Dify `ImagePromptMessageContent`，再交给
+  OpenAI-compatible 模型接口处理。
+- 插件不下载图片、不把图片转 base64；图片仍由上游多模态模型或聚合网关按 URL 读取。
+- 只处理 `ToolPromptMessage` 里的固定协议，不影响普通聊天、普通 LLM 节点、其他工具返回、
+  文档输入或已有多模态输入。
+- 增加 URL 过滤和去重：裸文件名、空值、非法格式不会传给模型，避免上游报
+  `invalid image_url`。
+- Agent 图片上下文逻辑已拆到 `models/llm/agent_image_context.py`，`llm.py` 只保留调用入口。
 
 ## 预设模型
 
