@@ -1,3 +1,4 @@
+import json
 import re
 from contextlib import suppress
 from functools import lru_cache
@@ -19,37 +20,36 @@ from dify_plugin.entities.model.message import (
     PromptMessageRole,
     PromptMessageTool,
     SystemPromptMessage,
+    ToolPromptMessage,
     UserPromptMessage,
     VideoPromptMessageContent,
 )
 from dify_plugin.errors.model import CredentialsValidateFailedError, InvokeError
 from dify_plugin.interfaces.model.openai_compatible.llm import OAICompatLargeLanguageModel
 
-from models.llm.agent_image_context import inject_image_context_from_tool_messages
-from models.llm.native.base import has_document, model_family
-from models.llm.native.gemini import GeminiNativeDocumentAdapter
-from models.llm.native.openai_responses import OpenAIResponsesDocumentAdapter
+from models.llm.agent_context import inject_context_from_tool_messages
+from models.llm.native.base import model_family
+from models.llm.native.openai_responses import OpenAIResponsesAdapter
 
 
 class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
     """Flypower LLM 调用适配器。
 
-    当前插件只接入 OpenAI Chat Completions 兼容模型，所以主体能力直接复用
-    Dify SDK 的 OpenAI 兼容基类。这里保留少量适配逻辑，用来处理不同上游
-    对“兼容 OpenAI”理解不完全一致的地方：
+    当前插件主要复用 Dify SDK 的 OpenAI 兼容基类；OpenAI 系列模型单独走
+    Responses API，其他模型继续走 Chat Completions 兼容路径。这里保留少量
+    适配逻辑，用来处理不同上游对“兼容 OpenAI”理解不完全一致的地方：
 
-    - 固定走 chat 模式。
+    - OpenAI 系列走 Responses，包含文件、结构化输出和工具调用。
+    - 非 OpenAI 系列固定走 chat 模式。
     - 默认使用新版工具调用 tool_call。
     - 转换图片、文档、音频、视频输入。
     - 统一使用 max_completion_tokens 参数。
     - 按模型 YAML 可选适配 thinking/reasoning 私有参数。
     - 用轻量请求校验供应商凭据。
 
-    文档统一走 OpenAI-compatible Responses 文件输入；普通请求继续走
-    OpenAI-compatible Chat 结构。Gemini 原生文件接口由插件内部常量控制。
+    Gemini 和其他国产/兼容模型暂不走文件特殊路径，后续可按模型族单独拆分。
     """
 
-    _USE_GEMINI_NATIVE_FILE_API = False
     _THINK_PATTERN = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
     _GEO_PROMPT_REFERENCE_PATTERN = re.compile(
         r"\{\{geo_prompt:[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+@[A-Za-z0-9_-]+}}"
@@ -422,20 +422,13 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
             message_dict["name"] = message.name
         return message_dict
 
-    def _openai_responses_adapter(self) -> OpenAIResponsesDocumentAdapter:
-        return OpenAIResponsesDocumentAdapter(
+    def _openai_responses_adapter(self) -> OpenAIResponsesAdapter:
+        return OpenAIResponsesAdapter(
             endpoint_url=self._endpoint_url,
             request_headers=self._request_headers,
             normalize_model_parameters=self._normalize_model_parameters,
             calc_response_usage=self._calc_response_usage,
             create_final_chunk=self._create_final_llm_result_chunk,
-        )
-
-    def _gemini_native_adapter(self) -> GeminiNativeDocumentAdapter:
-        return GeminiNativeDocumentAdapter(
-            endpoint_url=self._endpoint_url,
-            normalize_model_parameters=self._normalize_model_parameters,
-            calc_response_usage=self._calc_response_usage,
         )
 
     @classmethod
@@ -497,6 +490,58 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
                 continue
             prompt_message.content = cls._render_geo_prompt_text(prompt_message.content)
 
+    @classmethod
+    def _replace_tool_prompt_outputs(cls, prompt_messages: list[PromptMessage]) -> None:
+        """严格替换工具返回的 {"*_tool_prompt": "{{geo_prompt:...}}"}。"""
+        for prompt_message in prompt_messages:
+            if not isinstance(prompt_message, ToolPromptMessage):
+                continue
+            if not isinstance(prompt_message.content, str):
+                continue
+
+            reference_text = cls._extract_exact_tool_prompt_reference(prompt_message.content)
+            if not reference_text:
+                continue
+            prompt_message.content = cls._render_geo_prompt_text(reference_text)
+
+    @classmethod
+    def _extract_exact_tool_prompt_reference(cls, content: str) -> Optional[str]:
+        payload = cls._try_parse_json(content.strip())
+        if payload is None:
+            return None
+        return cls._extract_exact_tool_prompt_reference_from_payload(payload)
+
+    @classmethod
+    def _extract_exact_tool_prompt_reference_from_payload(
+        cls,
+        payload,
+    ) -> Optional[str]:
+        if not isinstance(payload, dict) or len(payload) != 1:
+            return None
+
+        key, value = next(iter(payload.items()))
+        if isinstance(key, str) and key.endswith("_tool_prompt"):
+            if isinstance(value, str) and cls._GEO_PROMPT_REFERENCE_PATTERN.fullmatch(value.strip()):
+                return value.strip()
+            return None
+
+        if not isinstance(value, str):
+            return None
+
+        parsed_wrapped_value = cls._try_parse_json(value.strip())
+        if parsed_wrapped_value is None:
+            return None
+        return cls._extract_exact_tool_prompt_reference_from_payload(parsed_wrapped_value)
+
+    @staticmethod
+    def _try_parse_json(text: str):
+        if not text or text[0] not in "{[":
+            return None
+        try:
+            return json.loads(text)
+        except ValueError:
+            return None
+
     def _invoke(
         self,
         model: str,
@@ -509,37 +554,29 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
         user: Optional[str] = None,
     ) -> Union[LLMResult, Generator]:
         normalized_credentials = self._normalize_credentials(model, credentials)
-        inject_image_context_from_tool_messages(prompt_messages)
+        family = model_family(model)
+        inject_context_from_tool_messages(
+            prompt_messages,
+            include_files=family == "openai_responses",
+        )
         self._render_geo_prompt_references(prompt_messages)
-        self._apply_json_schema_prompt(model_parameters, prompt_messages)
+        self._replace_tool_prompt_outputs(prompt_messages)
         with suppress(Exception):
             self._drop_analyze_channel(prompt_messages)
 
-        if has_document(prompt_messages):
-            family = model_family(model)
-            if family == "gemini" and self._USE_GEMINI_NATIVE_FILE_API:
-                return self._gemini_native_adapter().invoke(
-                    model=model,
-                    credentials=normalized_credentials,
-                    prompt_messages=prompt_messages,
-                    model_parameters=model_parameters,
-                    tools=tools,
-                    stop=stop,
-                    stream=stream,
-                    user=user,
-                )
-            if family in {"openai_responses", "gemini"}:
-                return self._openai_responses_adapter().invoke(
-                    model=model,
-                    credentials=normalized_credentials,
-                    prompt_messages=prompt_messages,
-                    model_parameters=model_parameters,
-                    tools=tools,
-                    stop=stop,
-                    stream=stream,
-                    user=user,
-                )
+        if family == "openai_responses":
+            return self._openai_responses_adapter().invoke(
+                model=model,
+                credentials=normalized_credentials,
+                prompt_messages=prompt_messages,
+                model_parameters=model_parameters,
+                tools=tools,
+                stop=stop,
+                stream=stream,
+                user=user,
+            )
 
+        self._apply_json_schema_prompt(model_parameters, prompt_messages)
         return super()._invoke(
             model=model,
             credentials=normalized_credentials,

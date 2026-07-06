@@ -1,0 +1,191 @@
+import json
+import mimetypes
+import re
+from contextlib import suppress
+from typing import Optional
+from urllib.parse import urlparse
+
+from dify_plugin.entities.model.message import (
+    DocumentPromptMessageContent,
+    ImagePromptMessageContent,
+    PromptMessage,
+    TextPromptMessageContent,
+    ToolPromptMessage,
+    UserPromptMessage,
+)
+
+_CONTEXT_PATTERN = re.compile(r"<DIFY_CONTEXT>(.*?)</DIFY_CONTEXT>", re.DOTALL)
+
+
+def inject_context_from_tool_messages(
+    prompt_messages: list[PromptMessage],
+    *,
+    include_files: bool,
+) -> None:
+    """Inject tool-returned image/file URL context into the current model call."""
+
+    parts: list[object] = []
+    image_count = 0
+    file_count = 0
+    seen_images: set[str] = set()
+    seen_files: set[str] = set()
+
+    for prompt_message in prompt_messages:
+        if not isinstance(prompt_message, ToolPromptMessage) or not isinstance(prompt_message.content, str):
+            continue
+
+        for payload in _extract_context_payloads(prompt_message.content):
+            for image_context in _context_items(payload, "images"):
+                url = _image_url(image_context)
+                if not url or url in seen_images:
+                    continue
+                seen_images.add(url)
+                image_count += 1
+                parts.append(_image_url_to_prompt_content(url, _optional_string(image_context.get("detail"))))
+
+            if not include_files:
+                continue
+
+            for file_context in _context_items(payload, "files"):
+                url = _file_url(file_context)
+                if not url or url in seen_files:
+                    continue
+                seen_files.add(url)
+                file_count += 1
+                parts.append(_file_url_to_prompt_content(url, file_context))
+
+    if not parts:
+        return
+
+    prompt_messages.append(
+        UserPromptMessage(
+            content=[
+                TextPromptMessageContent(
+                    data=_context_instruction(image_count=image_count, file_count=file_count)
+                ),
+                *parts,
+            ]
+        )
+    )
+
+
+def _extract_context_payloads(text: str) -> list[dict]:
+    payloads: list[dict] = []
+    for match in _CONTEXT_PATTERN.finditer(text):
+        raw_payload = match.group(1).strip()
+        for payload_text in _payload_text_candidates(raw_payload):
+            try:
+                payload = json.loads(payload_text)
+            except ValueError:
+                continue
+            if isinstance(payload, dict) and payload.get("type") == "dify_context":
+                payloads.append(payload)
+                break
+    return payloads
+
+
+def _payload_text_candidates(raw_payload: str) -> list[str]:
+    candidates = [raw_payload]
+    current = raw_payload
+    for _ in range(3):
+        with suppress(ValueError):
+            decoded = json.loads(f'"{current}"')
+            if isinstance(decoded, str) and decoded not in candidates:
+                candidates.append(decoded)
+                current = decoded
+                continue
+        break
+    return candidates
+
+
+def _context_items(payload: dict, key: str) -> list[dict]:
+    items = payload.get(key)
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _image_url(item: dict) -> Optional[str]:
+    url = _optional_string(item.get("url"))
+    if not url or not _is_public_url(url, allow_data=True):
+        return None
+    return url
+
+
+def _file_url(item: dict) -> Optional[str]:
+    url = _optional_string(item.get("url"))
+    if not url or not _is_public_url(url, allow_data=False):
+        return None
+    return url
+
+
+def _image_url_to_prompt_content(
+    image_url: str,
+    detail: Optional[str],
+) -> ImagePromptMessageContent:
+    return ImagePromptMessageContent(
+        format="url",
+        url=image_url,
+        mime_type=_guess_mime_type(image_url, default="image/png", prefix="image/"),
+        detail=_image_detail(detail),
+    )
+
+
+def _file_url_to_prompt_content(file_url: str, file_context: dict) -> DocumentPromptMessageContent:
+    filename = _optional_string(file_context.get("filename")) or _filename_from_url(file_url) or "document"
+    mime_type = (
+        _optional_string(file_context.get("mime_type"))
+        or _guess_mime_type(file_url, default="application/octet-stream")
+    )
+    return DocumentPromptMessageContent(
+        format="url",
+        url=file_url,
+        mime_type=mime_type,
+        filename=filename,
+    )
+
+
+def _context_instruction(*, image_count: int, file_count: int) -> str:
+    labels: list[str] = []
+    if image_count:
+        labels.append("image(s)")
+    if file_count:
+        labels.append("file(s)")
+    attachment_label = " and ".join(labels) or "context"
+    return f"External context refreshed by Dify tool output. Use the attached {attachment_label} when answering."
+
+
+def _is_public_url(value: str, *, allow_data: bool) -> bool:
+    parsed = urlparse(value.strip())
+    if allow_data and parsed.scheme == "data":
+        return True
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    return parsed.hostname not in {"localhost", "127.0.0.1", "0.0.0.0", "web", "nginx", "api"}
+
+
+def _image_detail(detail: Optional[str]) -> ImagePromptMessageContent.DETAIL:
+    if isinstance(detail, str) and detail.lower() == "high":
+        return ImagePromptMessageContent.DETAIL.HIGH
+    return ImagePromptMessageContent.DETAIL.LOW
+
+
+def _guess_mime_type(url: str, *, default: str, prefix: Optional[str] = None) -> str:
+    if url.startswith("data:"):
+        match = re.match(r"^data:([^;,]+)[;,]", url)
+        if match and (prefix is None or match.group(1).startswith(prefix)):
+            return match.group(1)
+    guessed_type, _ = mimetypes.guess_type(urlparse(url).path)
+    if guessed_type and (prefix is None or guessed_type.startswith(prefix)):
+        return guessed_type
+    return default
+
+
+def _filename_from_url(url: str) -> str:
+    path = urlparse(url).path
+    filename = path.rsplit("/", 1)[-1]
+    return filename.strip()
+
+
+def _optional_string(value: object) -> Optional[str]:
+    return value if isinstance(value, str) and value.strip() else None
