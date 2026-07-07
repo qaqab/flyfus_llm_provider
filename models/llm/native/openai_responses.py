@@ -28,7 +28,6 @@ def _debug(message: str, *args: object) -> None:
         return
     if args:
         message = message % args
-    print(message, flush=True)
     with suppress(Exception):
         with open("/tmp/flypower_responses_debug.log", "a", encoding="utf-8") as debug_file:
             debug_file.write(message + "\n")

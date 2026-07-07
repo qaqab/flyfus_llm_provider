@@ -59,6 +59,8 @@ Responses 转换规则：
 
 ## 本地开发
 
+完整规范见 [docs/local_development.md](/Users/walker/code_base/dify_demo/llm_provider_plugins/flypower_llm_provider_plugins/docs/local_development.md)。
+
 ```bash
 cd /Users/walker/code_base/dify_demo/llm_provider_plugins/flypower_llm_provider_plugins
 .venv/bin/python -m py_compile models/llm/llm.py models/llm/agent_context.py models/llm/native/openai_responses.py workflow_tools/read_files.py
