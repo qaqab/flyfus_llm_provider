@@ -1,5 +1,6 @@
 import json
 import re
+from contextvars import ContextVar
 from contextlib import suppress
 from functools import lru_cache
 from pathlib import Path
@@ -28,8 +29,24 @@ from dify_plugin.errors.model import CredentialsValidateFailedError, InvokeError
 from dify_plugin.interfaces.model.openai_compatible.llm import OAICompatLargeLanguageModel
 
 from models.llm.agent_context import inject_context_from_tool_messages
+from models.llm.invocation_logging import (
+    http_response_summary,
+    InvocationLog,
+    llm_result_summary,
+    prompt_messages_metrics,
+    prompt_messages_summary,
+    tools_summary,
+    upstream_openai_compatible_request_summary,
+    wrap_stream_with_invocation_log,
+)
 from models.llm.native.base import model_family
 from models.llm.native.openai_responses import OpenAIResponsesAdapter
+
+
+_ACTIVE_INVOCATION_LOG: ContextVar[Optional[InvocationLog]] = ContextVar(
+    "flypower_active_invocation_log",
+    default=None,
+)
 
 
 class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
@@ -54,8 +71,8 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
     _GEO_PROMPT_REFERENCE_PATTERN = re.compile(
         r"\{\{geo_prompt:[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+@[A-Za-z0-9_-]+}}"
     )
-    _GEO_PROMPT_RENDER_URL = "https://geo.dev.vocscope.com/api/geo/v2/dify_prompt/render"
-    _GEO_PROMPT_API_KEY = "test_dify_1780389317_af8ade862225"
+    _GEO_PROMPT_RENDER_URL = "https://www.flyfus.com/api/geo/v2/dify_prompt/render"
+    _GEO_PROMPT_API_KEY = "prod_dify_1782110522_f7082f8a4673"
 
     @classmethod
     def _render_geo_prompt_text(cls, text: str) -> str:
@@ -142,6 +159,10 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
         headers = {"Content-Type": "application/json"}
         if credentials.get("api_key"):
             headers["Authorization"] = f"Bearer {credentials['api_key']}"
+        invocation_id = credentials.get("_flypower_invocation_id")
+        if invocation_id:
+            headers["X-Client-Request-Id"] = invocation_id
+            headers["X-Flypower-Invocation-Id"] = invocation_id
         return headers
 
     def _endpoint_url(self, credentials: dict, path: str) -> str:
@@ -553,40 +574,150 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
         stream: bool = True,
         user: Optional[str] = None,
     ) -> Union[LLMResult, Generator]:
-        normalized_credentials = self._normalize_credentials(model, credentials)
-        family = model_family(model)
-        inject_context_from_tool_messages(
-            prompt_messages,
-            include_files=family == "openai_responses",
-        )
-        self._render_geo_prompt_references(prompt_messages)
-        self._replace_tool_prompt_outputs(prompt_messages)
-        with suppress(Exception):
-            self._drop_analyze_channel(prompt_messages)
-
-        if family == "openai_responses":
-            return self._openai_responses_adapter().invoke(
-                model=model,
-                credentials=normalized_credentials,
-                prompt_messages=prompt_messages,
-                model_parameters=model_parameters,
-                tools=tools,
-                stop=stop,
-                stream=stream,
-                user=user,
-            )
-
-        self._apply_json_schema_prompt(model_parameters, prompt_messages)
-        return super()._invoke(
+        invocation_log = InvocationLog.from_credentials(
             model=model,
-            credentials=normalized_credentials,
-            prompt_messages=prompt_messages,
-            model_parameters=self._normalize_model_parameters(model, model_parameters),
-            tools=tools,
-            stop=stop,
+            credentials=credentials,
             stream=stream,
             user=user,
         )
+        invocation_log.set_request(
+            model=model,
+            stream=stream,
+            user=user,
+            stop=stop,
+            model_parameters=model_parameters,
+            prompt_metrics_initial=prompt_messages_metrics(prompt_messages),
+            prompt_messages_initial=prompt_messages_summary(prompt_messages),
+            tools=tools_summary(tools),
+        )
+        invocation_log.event(
+            "invoke_started",
+            model_parameters=model_parameters,
+            tools_count=len(tools or []),
+            stop=stop,
+            prompt_metrics=prompt_messages_metrics(prompt_messages),
+        )
+        normalized_credentials = self._normalize_credentials(model, credentials)
+        normalized_credentials["_flypower_invocation_id"] = invocation_log.invocation_id
+        active_log_token = _ACTIVE_INVOCATION_LOG.set(invocation_log)
+        family = model_family(model)
+        invocation_log.set_request(model_family=family)
+        try:
+            with invocation_log.step("context_injection", include_files=family == "openai_responses"):
+                inject_context_from_tool_messages(
+                    prompt_messages,
+                    include_files=family == "openai_responses",
+                )
+            with invocation_log.step("geo_prompt_render"):
+                self._render_geo_prompt_references(prompt_messages)
+            with invocation_log.step("tool_prompt_replace"):
+                self._replace_tool_prompt_outputs(prompt_messages)
+            with invocation_log.step("analyze_channel_drop"):
+                with suppress(Exception):
+                    self._drop_analyze_channel(prompt_messages)
+            invocation_log.set_request(
+                prompt_metrics_final=prompt_messages_metrics(prompt_messages),
+                prompt_messages_final=prompt_messages_summary(prompt_messages),
+            )
+
+            if family == "openai_responses":
+                responses_adapter = self._openai_responses_adapter()
+                upstream_request_body = responses_adapter._build_body(
+                    model=model,
+                    credentials=normalized_credentials,
+                    prompt_messages=prompt_messages,
+                    model_parameters=dict(model_parameters),
+                    tools=tools,
+                    stop=stop,
+                    stream=stream,
+                    user=user,
+                )
+                invocation_log.set_request(
+                    model_parameters_final=model_parameters,
+                    adapter="openai_responses",
+                    upstream_request={
+                        "endpoint": self._endpoint_url(normalized_credentials, "responses"),
+                        "headers": self._request_headers(normalized_credentials),
+                        "body_summary": {
+                            "model": upstream_request_body.get("model"),
+                            "stream": upstream_request_body.get("stream"),
+                            "temperature": upstream_request_body.get("temperature"),
+                            "max_output_tokens": upstream_request_body.get("max_output_tokens"),
+                            "input_count": len(upstream_request_body.get("input") or []),
+                            "tool_count": len(upstream_request_body.get("tools") or []),
+                            "tool_choice": upstream_request_body.get("tool_choice"),
+                            "has_text_format": bool(upstream_request_body.get("text")),
+                        },
+                        "input_count": len(upstream_request_body.get("input") or []),
+                        "tool_count": len(upstream_request_body.get("tools") or []),
+                    },
+                )
+                with invocation_log.step("upstream_request", adapter="openai_responses"):
+                    result = responses_adapter.invoke(
+                        model=model,
+                        credentials=normalized_credentials,
+                        prompt_messages=prompt_messages,
+                        model_parameters=model_parameters,
+                        tools=tools,
+                        stop=stop,
+                        stream=stream,
+                        user=user,
+                        invocation_log=invocation_log,
+                    )
+                if stream:
+                    return wrap_stream_with_invocation_log(result, invocation_log)
+                result_summary = llm_result_summary(result)
+                invocation_log.set_response(**result_summary)
+                invocation_log.success(result_type=type(result).__name__, output_text=result_summary.get("output_text"))
+                return result
+
+            with invocation_log.step("json_schema_prompt_apply"):
+                self._apply_json_schema_prompt(model_parameters, prompt_messages)
+            with invocation_log.step("model_parameters_normalize"):
+                normalized_model_parameters = self._normalize_model_parameters(model, model_parameters)
+            invocation_log.set_request(
+                model_parameters_final=normalized_model_parameters,
+                prompt_messages_final=prompt_messages_summary(prompt_messages),
+                adapter="openai_compatible",
+                upstream_request=upstream_openai_compatible_request_summary(
+                    model=model,
+                    credentials=normalized_credentials,
+                    prompt_messages=prompt_messages,
+                    model_parameters=normalized_model_parameters,
+                    tools=tools,
+                    stop=stop,
+                    stream=stream,
+                    user=user,
+                    convert_message=self._convert_prompt_message_to_dict,
+                    headers=self._request_headers(normalized_credentials),
+                ),
+            )
+            with invocation_log.step("upstream_request", adapter="openai_compatible"):
+                result = super()._invoke(
+                    model=model,
+                    credentials=normalized_credentials,
+                    prompt_messages=prompt_messages,
+                    model_parameters=normalized_model_parameters,
+                    tools=tools,
+                    stop=stop,
+                    stream=stream,
+                    user=user,
+                )
+            if stream:
+                return wrap_stream_with_invocation_log(result, invocation_log)
+            result_summary = llm_result_summary(result)
+            invocation_log.set_response(**result_summary)
+            invocation_log.success(result_type=type(result).__name__, output_text=result_summary.get("output_text"))
+            return result
+        except Exception as error:
+            invocation_log.failure(error)
+            if stream:
+                invocation_log.flush()
+            raise
+        finally:
+            _ACTIVE_INVOCATION_LOG.reset(active_log_token)
+            if not stream:
+                invocation_log.flush()
 
     def _handle_generate_response(
         self,
@@ -596,6 +727,9 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
         prompt_messages: list[PromptMessage],
     ) -> LLMResult:
         """处理非流式响应里 tool_calls 存在但 message.content 缺失的兼容端返回。"""
+        active_log = _ACTIVE_INVOCATION_LOG.get()
+        if active_log is not None:
+            active_log.set_response(http=http_response_summary(response))
         response_json: dict = response.json()
         completion_type = LLMMode.value_of(credentials["mode"])
         choices = response_json.get("choices") or []

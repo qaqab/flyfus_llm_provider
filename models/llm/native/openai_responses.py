@@ -20,6 +20,7 @@ from dify_plugin.entities.model.message import (
 )
 from dify_plugin.errors.model import InvokeError
 
+from models.llm.invocation_logging import http_response_summary, responses_payload_summary
 from models.llm.native.base import file_bytes
 
 
@@ -60,6 +61,7 @@ class OpenAIResponsesAdapter:
         stop: Optional[list[str]],
         stream: bool,
         user: Optional[str],
+        invocation_log=None,
     ) -> Union[LLMResult, Generator]:
         request_body = self._build_body(
             model=model,
@@ -92,6 +94,8 @@ class OpenAIResponsesAdapter:
             raise InvokeError(f"OpenAI Responses 请求失败：{error}") from error
 
         request_id = response.headers.get("x-request-id") or response.headers.get("openai-request-id") or ""
+        if invocation_log is not None:
+            invocation_log.set_response(http=http_response_summary(response))
         _debug(
             "[flypower responses] response_headers model=%s stream=%s status=%s request_id=%s content_type=%s",
             model,
@@ -101,6 +105,8 @@ class OpenAIResponsesAdapter:
             response.headers.get("content-type", ""),
         )
         if response.status_code >= 400:
+            if invocation_log is not None:
+                invocation_log.set_response(error_body=response.text[:2000])
             _debug(
                 "[flypower responses] response_error model=%s status=%s body_head=%s",
                 model,
@@ -110,8 +116,8 @@ class OpenAIResponsesAdapter:
             raise InvokeError(f"OpenAI Responses 请求失败，状态码：{response.status_code}，响应：{response.text}")
 
         if stream:
-            return self._handle_stream(model, credentials, response, prompt_messages)
-        return self._handle_response(model, credentials, response, prompt_messages)
+            return self._handle_stream(model, credentials, response, prompt_messages, invocation_log=invocation_log)
+        return self._handle_response(model, credentials, response, prompt_messages, invocation_log=invocation_log)
 
     def _build_body(
         self,
@@ -402,9 +408,13 @@ class OpenAIResponsesAdapter:
         credentials: dict,
         response: requests.Response,
         prompt_messages: list[PromptMessage],
+        invocation_log=None,
     ) -> LLMResult:
         payload = response.json()
         usage_payload = payload.get("usage") or {}
+        if invocation_log is not None:
+            payload_summary = responses_payload_summary(payload)
+            invocation_log.set_response(**payload_summary)
         return LLMResult(
             model=payload.get("model", model),
             prompt_messages=prompt_messages,
@@ -426,6 +436,7 @@ class OpenAIResponsesAdapter:
         credentials: dict,
         response: requests.Response,
         prompt_messages: list[PromptMessage],
+        invocation_log=None,
     ) -> Generator:
         index = 0
         full_text = ""
@@ -438,6 +449,7 @@ class OpenAIResponsesAdapter:
         last_event_type = ""
         saw_completed = False
         yielded_chunks = 0
+        response_id = ""
 
         _debug("[flypower responses] stream_start model=%s prompt_summary=%s", model, self._prompt_summary(prompt_messages))
 
@@ -520,8 +532,17 @@ class OpenAIResponsesAdapter:
                 elif event_type in {"response.completed", "response.incomplete"}:
                     saw_completed = event_type == "response.completed"
                     response_payload = event.get("response") or {}
+                    response_id = response_payload.get("id") or response_id
                     final_model = response_payload.get("model") or final_model
                     usage_payload = response_payload.get("usage") or usage_payload
+                    if invocation_log is not None:
+                        payload_summary = responses_payload_summary(response_payload)
+                        invocation_log.set_response(
+                            **payload_summary,
+                            stream_event_counts=event_counts,
+                            stream_event_count=total_events,
+                            stream_last_event_type=last_event_type,
+                        )
                     if not pending_tool_calls:
                         pending_tool_calls = self._extract_pending_tool_calls(response_payload)
                     finish_reason = "tool_calls" if pending_tool_calls else "stop"
@@ -550,6 +571,13 @@ class OpenAIResponsesAdapter:
                 elif event_type == "response.failed":
                     response_payload = event.get("response") or {}
                     error = response_payload.get("error") or event.get("error") or {}
+                    if invocation_log is not None:
+                        invocation_log.set_response(
+                            response_id=response_payload.get("id") or response_id,
+                            error=error,
+                            stream_event_counts=event_counts,
+                            stream_event_count=total_events,
+                        )
                     _debug("[flypower responses] stream_failed model=%s error=%s", model, error)
                     raise InvokeError(f"OpenAI Responses 流式请求失败：{error}")
         except requests.exceptions.ChunkedEncodingError as error:
@@ -599,6 +627,20 @@ class OpenAIResponsesAdapter:
         )
 
         tool_calls = self._pending_tool_calls_to_messages(pending_tool_calls)
+        if invocation_log is not None:
+            invocation_log.set_response(
+                response_id=response_id,
+                model=final_model,
+                output_text=full_text,
+                usage=usage_payload,
+                finish_reason=finish_reason,
+                saw_completed=saw_completed,
+                stream_event_counts=event_counts,
+                stream_event_count=total_events,
+                stream_last_event_type=last_event_type,
+                yielded_chunks=yielded_chunks,
+                tool_calls_count=len(tool_calls),
+            )
         if tool_calls:
             yield LLMResultChunk(
                 model=final_model,
