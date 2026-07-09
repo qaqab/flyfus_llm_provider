@@ -1,18 +1,17 @@
-model: kimi-k2.7-code
+# https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-1-flash-image
+model: gemini-3.1-flash-image-preview
 label:
-  zh_Hans: kimi-k2.7-code
-  en_US: kimi-k2.7-code
+  zh_Hans: gemini-3.1-flash-image-preview
+  en_US: gemini-3.1-flash-image-preview
 model_type: llm
 features:
 - agent-thought
 - vision
+- document
 - video
-- tool-call
-- multi-tool-call
-- stream-tool-call
 model_properties:
   mode: chat
-  context_size: 262144
+  context_size: 131072
 parameter_rules:
 - name: temperature
   use_template: temperature
@@ -26,14 +25,6 @@ parameter_rules:
   default: 8192
   min: 1
   max: 32768
-- name: response_format
-  use_template: response_format
-  options:
-  - text
-  - json_object
-  - json_schema
-- name: json_schema
-  use_template: json_schema
 pricing:
   input: '0'
   output: '0'

@@ -163,6 +163,31 @@ def test_context_injection_handles_dify_json_wrapped_observation() -> None:
     assert injected.content[1].url == "https://cdn.example.com/report.xlsx"
 
 
+def test_context_injection_reads_protocol_from_user_text_for_responses() -> None:
+    user_text = (
+        "请读取这些上下文。\n"
+        + _context_output(
+            {
+                "images": [{"url": "https://cdn.example.com/a.png", "detail": "high"}],
+                "files": [{"url": "https://cdn.example.com/report.xlsx", "filename": "report.xlsx"}],
+            }
+        )["output"]
+    )
+    prompt_messages = [UserPromptMessage(content=user_text)]
+
+    inject_context_from_tool_messages(prompt_messages, include_files=True)
+
+    injected = prompt_messages[-1]
+    assert isinstance(injected, UserPromptMessage)
+    assert [part.type for part in injected.content] == [
+        PromptMessageContentType.TEXT,
+        PromptMessageContentType.IMAGE,
+        PromptMessageContentType.DOCUMENT,
+    ]
+    assert injected.content[1].url == "https://cdn.example.com/a.png"
+    assert injected.content[2].url == "https://cdn.example.com/report.xlsx"
+
+
 def test_context_injection_skips_files_for_chat_models() -> None:
     tool_output = _context_output(
         {
@@ -257,6 +282,50 @@ def test_responses_adapter_sends_context_file_url_as_input_file() -> None:
         {
             "type": "input_file",
             "file_url": "https://cdn.example.com/report.xlsx",
+        },
+    ]
+
+
+def test_user_text_protocol_reaches_responses_body_as_input_image() -> None:
+    adapter = OpenAIResponsesAdapter(
+        endpoint_url=lambda credentials, path: f"https://api.openai.com/v1/{path}",
+        request_headers=lambda credentials: {"Authorization": "Bearer test"},
+        normalize_model_parameters=lambda model, params: params,
+        calc_response_usage=lambda *args: None,
+        create_final_chunk=lambda **kwargs: None,
+    )
+    prompt_messages = [
+        UserPromptMessage(
+            content=(
+                "inspect image "
+                '<DIFY_CONTEXT>{"version":1,"type":"dify_context",'
+                '"images":[{"url":"data:image/png;base64,AAAA","detail":"high"}],'
+                '"files":[]}</DIFY_CONTEXT>'
+            )
+        )
+    ]
+    inject_context_from_tool_messages(prompt_messages, include_files=True)
+
+    body = adapter._build_body(
+        model="gpt-5.1",
+        credentials={},
+        prompt_messages=prompt_messages,
+        model_parameters={},
+        tools=None,
+        stop=None,
+        stream=False,
+        user=None,
+    )
+
+    assert body["input"][-1]["content"] == [
+        {
+            "type": "input_text",
+            "text": "External context refreshed by Dify tool output. Use the attached image(s) when answering.",
+        },
+        {
+            "type": "input_image",
+            "image_url": "data:image/png;base64,AAAA",
+            "detail": "high",
         },
     ]
 

@@ -1,17 +1,13 @@
-model: gemini-2.5-pro
+model: low
 label:
-  zh_Hans: gemini-2.5-pro
-  en_US: gemini-2.5-pro
+  zh_Hans: low
+  en_US: low
 model_type: llm
 features:
 - agent-thought
-- vision
-- document
 - tool-call
 - multi-tool-call
 - stream-tool-call
-- video
-- audio
 model_properties:
   mode: chat
   context_size: 1048576
@@ -27,7 +23,7 @@ parameter_rules:
   use_template: max_tokens
   default: 8192
   min: 1
-  max: 65536
+  max: 65535
 - name: response_format
   use_template: response_format
   options:
@@ -36,18 +32,21 @@ parameter_rules:
   - json_schema
 - name: json_schema
   use_template: json_schema
-- name: thinking_budget
+- name: thinking_level
   label:
-    en_US: Thinking Budget
-    zh_Hans: 思考预算
-  type: int
-  default: 1024
-  min: 0
-  max: 24576
+    en_US: Thinking Level
+    zh_Hans: 思考层级
+  type: string
+  default: High
+  options:
+  - Minimal
+  - Low
+  - Medium
+  - High
   required: false
   help:
-    zh_Hans: 思考预算限制；不设置时模型会按请求复杂度自动调整。
-    en_US: Budget limit for thinking; if not set, the model adjusts automatically.
+    zh_Hans: 控制模型推理深度。Gemini 3 默认 High。
+    en_US: Controls the model reasoning depth. Gemini 3 defaults to High.
 - name: include_thoughts
   type: boolean
   required: false

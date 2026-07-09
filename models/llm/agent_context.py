@@ -22,7 +22,7 @@ def inject_context_from_tool_messages(
     *,
     include_files: bool,
 ) -> None:
-    """Inject tool-returned image/file URL context into the current model call."""
+    """Inject URL context found in tool outputs or user text into the current model call."""
 
     parts: list[object] = []
     image_count = 0
@@ -31,10 +31,7 @@ def inject_context_from_tool_messages(
     seen_files: set[str] = set()
 
     for prompt_message in prompt_messages:
-        if not isinstance(prompt_message, ToolPromptMessage) or not isinstance(prompt_message.content, str):
-            continue
-
-        for payload in _extract_context_payloads(prompt_message.content):
+        for payload in _extract_context_payloads_from_message(prompt_message):
             for image_context in _context_items(payload, "images"):
                 url = _image_url(image_context)
                 if not url or url in seen_images:
@@ -67,6 +64,33 @@ def inject_context_from_tool_messages(
             ]
         )
     )
+
+
+def _extract_context_payloads_from_message(prompt_message: PromptMessage) -> list[dict]:
+    if isinstance(prompt_message, ToolPromptMessage) and isinstance(prompt_message.content, str):
+        return _extract_context_payloads(prompt_message.content)
+
+    if isinstance(prompt_message, UserPromptMessage):
+        payloads: list[dict] = []
+        for text in _user_message_texts(prompt_message):
+            payloads.extend(_extract_context_payloads(text))
+        return payloads
+
+    return []
+
+
+def _user_message_texts(prompt_message: UserPromptMessage) -> list[str]:
+    if isinstance(prompt_message.content, str):
+        return [prompt_message.content]
+
+    if not isinstance(prompt_message.content, list):
+        return []
+
+    texts: list[str] = []
+    for part in prompt_message.content:
+        if isinstance(part, TextPromptMessageContent):
+            texts.append(part.data)
+    return texts
 
 
 def _extract_context_payloads(text: str) -> list[dict]:
