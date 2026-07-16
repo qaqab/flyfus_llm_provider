@@ -12,7 +12,6 @@ from dify_plugin.entities.model.message import (
 from models.llm.agent_context import inject_context_from_tool_messages
 from models.llm.llm import FlypowerLargeLanguageModel
 from models.llm.native.openai_responses import OpenAIResponsesAdapter
-from workflow_tools.read_files import main as read_files_main
 
 
 class FakeResponse:
@@ -30,95 +29,6 @@ class FakeResponse:
         pass
 
 
-def test_read_files_keeps_public_urls_and_returns_reusable_index() -> None:
-    result = read_files_main(
-        json.dumps(
-            {
-                "images": [
-                    {"url": "https://cdn.example.com/a.png", "detail": "high"},
-                    {"url": "https://cdn.example.com/a.png", "detail": "high"},
-                ],
-                "files": [
-                    {
-                        "url": "https://cdn.example.com/report.xlsx",
-                        "filename": "report.xlsx",
-                        "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    }
-                ],
-            }
-        )
-    )
-
-    output = result["output"]
-    assert output.startswith("已保存 URL 文件上下文")
-    assert output.endswith("</DIFY_CONTEXT>")
-    assert "<DIFY_IMAGE_CONTEXT>" not in output
-    assert "1. 图片: a.png" in output
-    assert "2. 文件: report.xlsx" in output
-
-    payload = _extract_context_from_output(output)
-    assert payload == {
-        "version": 1,
-        "type": "dify_context",
-        "images": [
-            {
-                "url": "https://cdn.example.com/a.png",
-                "filename": "a.png",
-                "mime_type": "image/png",
-                "detail": "high",
-            }
-        ],
-        "files": [
-            {
-                "url": "https://cdn.example.com/report.xlsx",
-                "filename": "report.xlsx",
-                "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            }
-        ],
-    }
-
-
-def test_read_files_accepts_plain_url_and_url_list() -> None:
-    plain_result = read_files_main("https://cdn.example.com/a.png")
-    plain_payload = _extract_context_from_output(plain_result["output"])
-    assert plain_payload["images"] == [
-        {
-            "url": "https://cdn.example.com/a.png",
-            "filename": "a.png",
-            "mime_type": "image/png",
-            "detail": "high",
-        }
-    ]
-
-    list_result = read_files_main(json.dumps(["https://cdn.example.com/report.xlsx"]))
-    list_payload = _extract_context_from_output(list_result["output"])
-    assert list_payload["files"] == [
-        {
-            "url": "https://cdn.example.com/report.xlsx",
-            "filename": "report.xlsx",
-            "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        }
-    ]
-
-
-def test_read_files_ignores_local_files_and_internal_urls() -> None:
-    result = read_files_main(
-        json.dumps(
-            {
-                "images": [{"url": "http://localhost:5001/files/a.png"}],
-                "files": [
-                    {"path": "/tmp/report.xlsx", "filename": "report.xlsx"},
-                    {"url": "files/upload/report.xlsx", "filename": "report.xlsx"},
-                ],
-            }
-        )
-    )
-    output = result["output"]
-    assert output.startswith("没有可用的 URL 文件上下文。")
-    payload = _extract_context_from_output(output)
-    assert payload == {"version": 1, "type": "dify_context", "images": [], "files": []}
-
-
 def test_context_injection_adds_images_and_files_for_responses() -> None:
     tool_output = _context_output(
         {
@@ -126,7 +36,7 @@ def test_context_injection_adds_images_and_files_for_responses() -> None:
             "files": [{"url": "https://cdn.example.com/report.xlsx", "filename": "report.xlsx"}],
         }
     )["output"]
-    prompt_messages = [ToolPromptMessage(content=tool_output, tool_call_id="call_1", name="read_files")]
+    prompt_messages = [ToolPromptMessage(content=tool_output, tool_call_id="call_1", name="read_file")]
 
     inject_context_from_tool_messages(prompt_messages, include_files=True)
 
@@ -195,7 +105,7 @@ def test_context_injection_skips_files_for_chat_models() -> None:
             "files": [{"url": "https://cdn.example.com/report.xlsx"}],
         }
     )["output"]
-    prompt_messages = [ToolPromptMessage(content=tool_output, tool_call_id="call_1", name="read_files")]
+    prompt_messages = [ToolPromptMessage(content=tool_output, tool_call_id="call_1", name="read_file")]
 
     inject_context_from_tool_messages(prompt_messages, include_files=False)
 
@@ -217,7 +127,7 @@ def test_context_injection_ignores_internal_and_data_file_urls() -> None:
             ],
         }
     )["output"]
-    prompt_messages = [ToolPromptMessage(content=tool_output, tool_call_id="call_1", name="read_files")]
+    prompt_messages = [ToolPromptMessage(content=tool_output, tool_call_id="call_1", name="read_file")]
 
     inject_context_from_tool_messages(prompt_messages, include_files=True)
 

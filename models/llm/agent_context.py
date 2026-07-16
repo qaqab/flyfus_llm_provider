@@ -15,6 +15,8 @@ from dify_plugin.entities.model.message import (
 )
 
 _CONTEXT_PATTERN = re.compile(r"<FLYPOWER_CONTEXT>(.*?)</FLYPOWER_CONTEXT>", re.DOTALL)
+_IMAGE_URL_SUFFIXES = (".png", ".jpg", ".jpeg")
+_FILE_URL_SUFFIXES = (".pdf", ".md", ".xlsx", ".csv", ".txt", ".html")
 
 
 def inject_context_from_tool_messages(
@@ -149,10 +151,12 @@ def _normalize_context_payload(payload: object) -> Optional[dict]:
         if not url or url in seen_urls or not _is_public_url(url, allow_data=False):
             continue
         seen_urls.add(url)
-        mime_type = _guess_mime_type(url, default="application/octet-stream")
-        if mime_type.startswith("image/"):
+        context_kind = _url_context_kind(url)
+        if context_kind == "image":
+            mime_type = _guess_mime_type(url, default="image/png", prefix="image/")
             images.append({"url": url, "mime_type": mime_type, "detail": "high"})
-        else:
+        elif context_kind == "file":
+            mime_type = _guess_mime_type(url, default="application/octet-stream")
             files.append(
                 {
                     "url": url,
@@ -169,6 +173,19 @@ def _image_url(item: dict) -> Optional[str]:
     if not url or not _is_public_url(url, allow_data=True):
         return None
     return url
+
+
+def _is_image_url(url: str) -> bool:
+    return urlparse(url).path.lower().endswith(_IMAGE_URL_SUFFIXES)
+
+
+def _url_context_kind(url: str) -> Optional[str]:
+    path = urlparse(url).path.lower()
+    if path.endswith(_IMAGE_URL_SUFFIXES):
+        return "image"
+    if path.endswith(_FILE_URL_SUFFIXES):
+        return "file"
+    return None
 
 
 def _file_url(item: dict) -> Optional[str]:
