@@ -74,6 +74,8 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
     )
     _GEO_PROMPT_RENDER_URL = "https://www.flyfus.com/api/geo/v2/dify_prompt/render"
     _GEO_PROMPT_API_KEY = "prod_dify_1782110522_f7082f8a4673"
+    _REASONING_EFFORT_TOOL_NAME = "set_next_step"
+    _REASONING_EFFORT_VALUES = {"low", "medium", "high", "xhigh"}
 
     @classmethod
     def _render_geo_prompt_text(cls, text: str) -> str:
@@ -154,6 +156,11 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
         normalized_credentials.setdefault("stream_function_calling", "supported")
         normalized_credentials.setdefault("endpoint_model_name", model)
         return normalized_credentials
+
+    def get_model_schema(self, model: str, credentials=None):
+        """Keep schema lookup compatible with credentials saved before ``mode`` existed."""
+        normalized_credentials = self._normalize_credentials(model, dict(credentials or {}))
+        return super().get_model_schema(model, normalized_credentials)
 
     def _request_headers(self, credentials: dict) -> dict:
         """构造上游请求头。"""
@@ -527,6 +534,42 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
             prompt_message.content = cls._render_geo_prompt_text(reference_text)
 
     @classmethod
+    def _reasoning_effort_from_tool_messages(cls, prompt_messages: list[PromptMessage]) -> Optional[str]:
+        """Read the next reasoning effort from the dedicated workflow tool only."""
+        reasoning_effort = None
+        for prompt_message in prompt_messages:
+            if not isinstance(prompt_message, ToolPromptMessage):
+                continue
+            if prompt_message.name != cls._REASONING_EFFORT_TOOL_NAME:
+                continue
+            if not isinstance(prompt_message.content, str):
+                continue
+            parsed_effort = cls._extract_reasoning_effort(prompt_message.content)
+            if parsed_effort:
+                reasoning_effort = parsed_effort
+        return reasoning_effort
+
+    @classmethod
+    def _extract_reasoning_effort(cls, content: str) -> Optional[str]:
+        payload = cls._try_parse_json(content.strip())
+        # Dify wraps Workflow tool output as tool name -> result -> output.
+        for _ in range(4):
+            if not isinstance(payload, dict):
+                return None
+
+            effort = payload.get("reasoning_effort")
+            if isinstance(effort, str) and effort.lower() in cls._REASONING_EFFORT_VALUES:
+                return effort.lower()
+
+            if len(payload) != 1:
+                return None
+            wrapped_value = next(iter(payload.values()))
+            if not isinstance(wrapped_value, str):
+                return None
+            payload = cls._try_parse_json(wrapped_value.strip())
+        return None
+
+    @classmethod
     def _extract_exact_tool_prompt_reference(cls, content: str) -> Optional[str]:
         payload = cls._try_parse_json(content.strip())
         if payload is None:
@@ -575,6 +618,11 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
         stream: bool = True,
         user: Optional[str] = None,
     ) -> Union[LLMResult, Generator]:
+        effective_model_parameters = dict(model_parameters)
+        reasoning_effort = self._reasoning_effort_from_tool_messages(prompt_messages)
+        if reasoning_effort:
+            effective_model_parameters["reasoning_effort"] = reasoning_effort
+
         invocation_log = InvocationLog.from_credentials(
             model=model,
             credentials=credentials,
@@ -596,14 +644,14 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
             stream=stream,
             user=user,
             stop=stop,
-            model_parameters=model_parameters,
+            model_parameters=effective_model_parameters,
             prompt_metrics_initial=prompt_messages_metrics(prompt_messages),
             prompt_messages_initial=prompt_messages_summary(prompt_messages),
             tools=tools_summary(tools),
         )
         invocation_log.event(
             "invoke_started",
-            model_parameters=model_parameters,
+            model_parameters=effective_model_parameters,
             tools_count=len(tools or []),
             stop=stop,
             prompt_metrics=prompt_messages_metrics(prompt_messages),
@@ -637,14 +685,14 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
                     model=model,
                     credentials=normalized_credentials,
                     prompt_messages=prompt_messages,
-                    model_parameters=dict(model_parameters),
+                    model_parameters=dict(effective_model_parameters),
                     tools=tools,
                     stop=stop,
                     stream=stream,
                     user=user,
                 )
                 invocation_log.set_request(
-                    model_parameters_final=model_parameters,
+                    model_parameters_final=effective_model_parameters,
                     adapter="openai_responses",
                     upstream_request={
                         "endpoint": self._endpoint_url(normalized_credentials, "responses"),
@@ -668,7 +716,7 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
                         model=model,
                         credentials=normalized_credentials,
                         prompt_messages=prompt_messages,
-                        model_parameters=model_parameters,
+                        model_parameters=effective_model_parameters,
                         tools=tools,
                         stop=stop,
                         stream=stream,
@@ -684,9 +732,9 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
                 return result
 
             with invocation_log.step("json_schema_prompt_apply"):
-                self._apply_json_schema_prompt(model_parameters, prompt_messages)
+                self._apply_json_schema_prompt(effective_model_parameters, prompt_messages)
             with invocation_log.step("model_parameters_normalize"):
-                normalized_model_parameters = self._normalize_model_parameters(model, model_parameters)
+                normalized_model_parameters = self._normalize_model_parameters(model, effective_model_parameters)
             invocation_log.set_request(
                 model_parameters_final=normalized_model_parameters,
                 prompt_messages_final=prompt_messages_summary(prompt_messages),
@@ -744,7 +792,7 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
         if active_log is not None:
             active_log.set_response(http=http_response_summary(response))
         response_json: dict = response.json()
-        completion_type = LLMMode.value_of(credentials["mode"])
+        completion_type = LLMMode.value_of(credentials.get("mode", "chat"))
         choices = response_json.get("choices") or []
         if not choices:
             raise InvokeError("LLM response returned no choices")

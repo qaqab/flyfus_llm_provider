@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.0.36
+
+- 兼容 Dify Workflow 工具的 `tool name -> result -> output` 三层结果包装。
+
+## 0.0.35
+
+- 修复旧凭据缺少 `mode` 时读取模型 schema 失败，导致 Agent 不能选择 Flypower 模型的问题。
+
+## 0.0.34
+
+- 支持 `set_next_step` 工作流工具返回 `reasoning_effort`，并将其仅用于该工具调用后的下一次模型请求。
+
 ## 0.0.27
 
 - GPT/OpenAI 系列模型改走 Responses API，Gemini 和其他模型继续走 chat 路径。

@@ -447,6 +447,51 @@ def test_tool_prompt_requires_exact_shape(monkeypatch) -> None:
     assert "extra" in prompt_messages[6].content
 
 
+def test_reasoning_effort_is_read_only_from_set_next_step_tool() -> None:
+    prompt_messages = [
+        ToolPromptMessage(
+            content='{"reasoning_effort":"high","next_objective":"Investigate the failure."}',
+            tool_call_id="call_1",
+            name="set_next_step",
+        ),
+        ToolPromptMessage(
+            content='{"reasoning_effort":"xhigh"}',
+            tool_call_id="call_2",
+            name="other_tool",
+        ),
+    ]
+
+    effort = FlypowerLargeLanguageModel._reasoning_effort_from_tool_messages(prompt_messages)
+
+    assert effort == "high"
+    assert "next_objective" in prompt_messages[0].content
+
+
+def test_reasoning_effort_supports_dify_wrapped_workflow_output() -> None:
+    output = '{"reasoning_effort":"xhigh","next_objective":"Prepare the final answer."}'
+    prompt_messages = [
+        ToolPromptMessage(
+            content=json.dumps({"set_next_step": json.dumps({"result": output})}),
+            tool_call_id="call_1",
+            name="set_next_step",
+        )
+    ]
+
+    assert FlypowerLargeLanguageModel._reasoning_effort_from_tool_messages(prompt_messages) == "xhigh"
+
+
+def test_reasoning_effort_rejects_invalid_tool_output() -> None:
+    prompt_messages = [
+        ToolPromptMessage(
+            content='{"reasoning_effort":"maximum"}',
+            tool_call_id="call_1",
+            name="set_next_step",
+        )
+    ]
+
+    assert FlypowerLargeLanguageModel._reasoning_effort_from_tool_messages(prompt_messages) is None
+
+
 def _context_output(payload: dict) -> dict:
     context = {
         "version": 1,
