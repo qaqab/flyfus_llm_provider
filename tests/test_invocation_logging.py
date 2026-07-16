@@ -4,33 +4,33 @@ from types import SimpleNamespace
 from models.llm.invocation_logging import InvocationLog, wrap_stream_with_invocation_log
 
 
-def test_invocation_log_uses_hardcoded_token(monkeypatch) -> None:
-    posted = []
-    monkeypatch.delenv("AXIOM_API_TOKEN", raising=False)
-    monkeypatch.setattr("models.llm.invocation_logging.requests.post", lambda *args, **kwargs: posted.append((args, kwargs)))
+def test_invocation_log_uses_provider_credentials(monkeypatch) -> None:
+    written = []
+    monkeypatch.setattr(
+        "models.llm.invocation_logging.write_invocation_log",
+        lambda credentials, event: written.append((credentials, event)),
+    )
 
-    invocation_log = InvocationLog.from_credentials(model="gpt-5.4", credentials={}, stream=False, user=None)
+    credentials = {"sls_endpoint": "https://sls.example.com"}
+    invocation_log = InvocationLog.from_credentials(model="gpt-5.4", credentials=credentials, stream=False, user=None)
     invocation_log.success()
     invocation_log.flush()
 
-    assert len(posted) == 1
-    assert posted[0][1]["headers"]["Authorization"].startswith("Bearer xaat-")
+    assert written[0][0] is credentials
+    assert written[0][1]["invocation_id"] == invocation_log.invocation_id
 
 
 def test_invocation_log_posts_clean_event(monkeypatch) -> None:
-    posted = []
-
-    def fake_post(*args, **kwargs):
-        posted.append((args, kwargs))
-
-    monkeypatch.setattr("models.llm.invocation_logging.requests.post", fake_post)
+    written = []
+    monkeypatch.setattr(
+        "models.llm.invocation_logging.write_invocation_log",
+        lambda credentials, event: written.append((credentials, event)),
+    )
 
     invocation_log = InvocationLog.from_credentials(
         model="gpt-5.4",
         credentials={
-            "axiom_api_token": "axiom-token",
             "api_key": "model-token",
-            "axiom_dataset": "plugins_test",
         },
         stream=False,
         user="user-1",
@@ -42,11 +42,8 @@ def test_invocation_log_posts_clean_event(monkeypatch) -> None:
     invocation_log.success(result_type="LLMResult")
     invocation_log.flush()
 
-    assert len(posted) == 1
-    args, kwargs = posted[0]
-    assert args[0] == "https://us-east-1.aws.edge.axiom.co/v1/ingest/plugins_test"
-    assert kwargs["headers"]["Authorization"] == "Bearer axiom-token"
-    event = kwargs["json"][0]
+    assert len(written) == 1
+    event = written[0][1]
     assert event["status"] == "success"
     assert "result" not in event
     assert event["schema_version"] == 3
@@ -57,8 +54,11 @@ def test_invocation_log_posts_clean_event(monkeypatch) -> None:
 
 
 def test_invocation_log_does_not_redact_usage_token_counts(monkeypatch) -> None:
-    posted = []
-    monkeypatch.setattr("models.llm.invocation_logging.requests.post", lambda *args, **kwargs: posted.append((args, kwargs)))
+    written = []
+    monkeypatch.setattr(
+        "models.llm.invocation_logging.write_invocation_log",
+        lambda credentials, event: written.append((credentials, event)),
+    )
 
     invocation_log = InvocationLog.from_credentials(model="gpt-5.4", credentials={}, stream=False, user=None)
     invocation_log.set_response(
@@ -73,7 +73,7 @@ def test_invocation_log_does_not_redact_usage_token_counts(monkeypatch) -> None:
     invocation_log.success()
     invocation_log.flush()
 
-    event = posted[0][1]["json"][0]
+    event = written[0][1]
     assert event["response_id"] == "resp_123"
     assert event["output"]["usage"]["input_tokens"] == 10
     assert event["output"]["usage"]["output_tokens"] == 20
@@ -81,8 +81,11 @@ def test_invocation_log_does_not_redact_usage_token_counts(monkeypatch) -> None:
 
 
 def test_invocation_log_classifies_system_user_as_single_call(monkeypatch) -> None:
-    posted = []
-    monkeypatch.setattr("models.llm.invocation_logging.requests.post", lambda *args, **kwargs: posted.append((args, kwargs)))
+    written = []
+    monkeypatch.setattr(
+        "models.llm.invocation_logging.write_invocation_log",
+        lambda credentials, event: written.append((credentials, event)),
+    )
 
     invocation_log = InvocationLog.from_credentials(model="gpt-5.4", credentials={}, stream=False, user=None)
     invocation_log.set_request(
@@ -94,13 +97,16 @@ def test_invocation_log_classifies_system_user_as_single_call(monkeypatch) -> No
     invocation_log.success()
     invocation_log.flush()
 
-    event = posted[0][1]["json"][0]
+    event = written[0][1]
     assert event["input"]["kind"] == "single_call"
 
 
 def test_invocation_log_keeps_error_details_without_success_result(monkeypatch) -> None:
-    posted = []
-    monkeypatch.setattr("models.llm.invocation_logging.requests.post", lambda *args, **kwargs: posted.append((args, kwargs)))
+    written = []
+    monkeypatch.setattr(
+        "models.llm.invocation_logging.write_invocation_log",
+        lambda credentials, event: written.append((credentials, event)),
+    )
 
     invocation_log = InvocationLog.from_credentials(model="gpt-5.4", credentials={}, stream=False, user=None)
     try:
@@ -109,7 +115,7 @@ def test_invocation_log_keeps_error_details_without_success_result(monkeypatch) 
         invocation_log.failure(error)
     invocation_log.flush()
 
-    event = posted[0][1]["json"][0]
+    event = written[0][1]
     assert event["status"] == "error"
     assert event["error"]["error_type"] == "RuntimeError"
     assert event["error"]["error"] == "boom"

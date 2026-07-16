@@ -1,4 +1,3 @@
-import os
 import time
 import traceback
 import uuid
@@ -7,12 +6,9 @@ from contextlib import contextmanager, suppress
 from datetime import datetime, timezone
 from typing import Any, Iterator, Optional
 
-import requests
+from models.llm.sls_logging import write_invocation_log
 
 
-_DEFAULT_AXIOM_ENDPOINT = "https://us-east-1.aws.edge.axiom.co/v1"
-_DEFAULT_AXIOM_DATASET = "plugins_test"
-_DEFAULT_AXIOM_API_TOKEN = "xaat-78e57c64-818c-479f-9145-5a5aa285ff01"
 _MAX_STRING_LENGTH = 30000
 _MAX_EVENT_STRING_LENGTH = 8000
 _MAX_LIST_ITEMS = 80
@@ -101,29 +97,6 @@ class InvocationLog:
             return
         self.flushed = True
 
-        # Temporary: keep invocation data local until the logging backend is ready.
-        # Remove this return to re-enable Axiom uploads.
-        return
-
-        token = (
-            self.credentials.get("axiom_api_token")
-            or os.getenv("AXIOM_API_TOKEN")
-            or _DEFAULT_AXIOM_API_TOKEN
-        )
-        if not token:
-            return
-
-        endpoint = (
-            self.credentials.get("axiom_endpoint")
-            or os.getenv("AXIOM_ENDPOINT")
-            or _DEFAULT_AXIOM_ENDPOINT
-        )
-        dataset = (
-            self.credentials.get("axiom_dataset")
-            or os.getenv("AXIOM_DATASET")
-            or _DEFAULT_AXIOM_DATASET
-        )
-
         response_id = _first_present(self.response.get("response_id"), self.response.get("id"))
         upstream_request_id = _nested_get(self.response, "http", "headers", "x-request-id")
         upstream_client_request_id = _nested_get(self.response, "http", "headers", "x-client-request-id")
@@ -191,34 +164,7 @@ class InvocationLog:
         error_result = _compact_error_result(self.result)
         if error_result:
             event["error"] = error_result
-        event["message"] = (
-            f"llm_invocation model={self.model} invocation_id={self.invocation_id} "
-            f"response_id={event.get('response_id') or ''} "
-            f"upstream_request_id={event.get('upstream_request_id') or ''}"
-        )
-
-        try:
-            response = requests.post(
-                f"{endpoint.rstrip('/')}/ingest/{dataset}",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                },
-                json=[event],
-                timeout=(5, 30),
-            )
-            print(
-                f"Axiom invocation log upload status={response.status_code} "
-                f"invocation_id={self.invocation_id}",
-                flush=True,
-            )
-        except Exception as error:
-            print(
-                f"Axiom invocation log upload skipped error={type(error).__name__} "
-                f"invocation_id={self.invocation_id}",
-                flush=True,
-            )
-            return
+        write_invocation_log(self.credentials, event)
 
 
 def wrap_stream_with_invocation_log(stream_result, invocation_log: InvocationLog, usage_reporter=None):

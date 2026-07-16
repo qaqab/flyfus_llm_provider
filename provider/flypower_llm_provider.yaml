@@ -32,6 +32,78 @@ provider_credential_schema:
       placeholder:
         en_US: Base URL, e.g. https://openapi.flyposter.ai/v1
         zh_Hans: Base URL，例如 https://openapi.flyposter.ai/v1
+    - variable: sls_endpoint
+      label:
+        en_US: SLS Endpoint
+        zh_Hans: SLS 地址
+      type: text-input
+      required: true
+      placeholder:
+        en_US: https://us-east-1.log.aliyuncs.com
+        zh_Hans: 例如 https://us-east-1.log.aliyuncs.com
+    - variable: sls_project
+      label:
+        en_US: SLS Project
+        zh_Hans: SLS 项目
+      type: text-input
+      required: true
+      placeholder:
+        en_US: Enter SLS project name
+        zh_Hans: 输入 SLS 项目名称
+    - variable: sls_access_key_id
+      label:
+        en_US: SLS AccessKey ID
+        zh_Hans: SLS AccessKey ID
+      type: secret-input
+      required: true
+      placeholder:
+        en_US: Enter SLS AccessKey ID
+        zh_Hans: 输入 SLS AccessKey ID
+    - variable: sls_access_key_secret
+      label:
+        en_US: SLS AccessKey Secret
+        zh_Hans: SLS AccessKey Secret
+      type: secret-input
+      required: true
+      placeholder:
+        en_US: Enter SLS AccessKey Secret
+        zh_Hans: 输入 SLS AccessKey Secret
+    - variable: geo_prompt_render_url
+      label:
+        en_US: Geo Prompt Render URL
+        zh_Hans: Geo Prompt 渲染地址
+      type: text-input
+      required: true
+      placeholder:
+        en_US: Enter Geo Prompt render URL
+        zh_Hans: 输入 Geo Prompt 渲染地址
+    - variable: geo_prompt_api_key
+      label:
+        en_US: Geo Prompt API Key
+        zh_Hans: Geo Prompt API Key
+      type: secret-input
+      required: true
+      placeholder:
+        en_US: Enter Geo Prompt API Key
+        zh_Hans: 输入 Geo Prompt API Key
+    - variable: token_usage_url
+      label:
+        en_US: Token Usage URL
+        zh_Hans: Token 用量上报地址
+      type: text-input
+      required: false
+      placeholder:
+        en_US: Enter token usage URL
+        zh_Hans: 输入 Token 用量上报地址
+    - variable: token_usage_api_key
+      label:
+        en_US: Token Usage API Key
+        zh_Hans: Token 用量上报 API Key
+      type: secret-input
+      required: false
+      placeholder:
+        en_US: Enter token usage API Key
+        zh_Hans: 输入 Token 用量上报 API Key
 models:
   llm:
     predefined:

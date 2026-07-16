@@ -4,7 +4,6 @@ label:
   en_US: grok-4.5
 model_type: llm
 features:
-- vision
 - agent-thought
 - tool-call
 - multi-tool-call

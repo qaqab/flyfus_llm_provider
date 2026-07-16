@@ -95,22 +95,15 @@ def test_post_token_usage_uses_dedicated_configuration(monkeypatch) -> None:
     )
     payload = normalize_usage("request-4", "gpt-5.5", {})
 
-    result = post_token_usage(payload)
+    credentials = {
+        "token_usage_url": "https://usage.example.com/token-usage",
+        "token_usage_api_key": "usage-key",
+    }
 
-    assert result is response
-    assert calls == [
-        (
-            ("https://geo.dev.vocscope.com/api/geo/v2/dify_llm/token-usage",),
-            {
-                "headers": {
-                    "Authorization": "Bearer test_dify_1780389317_af8ade862225",
-                    "Content-Type": "application/json",
-                },
-                "json": payload,
-                "timeout": (3, 10),
-            },
-        )
-    ]
+    result = post_token_usage(payload, credentials)
+
+    assert result is None
+    assert calls == []
 
 
 def test_extract_usage_context_removes_tag_from_string_and_list_content() -> None:
@@ -133,7 +126,7 @@ def test_report_token_usage_adds_owner_and_keeps_request_id(monkeypatch) -> None
     payloads = []
     monkeypatch.setattr(
         "models.llm.usage_reporting.post_token_usage",
-        lambda payload: payloads.append(payload),
+        lambda payload, credentials: payloads.append((payload, credentials)),
     )
 
     reported = report_token_usage(
@@ -141,20 +134,24 @@ def test_report_token_usage_adds_owner_and_keeps_request_id(monkeypatch) -> None
         "gpt-5.5",
         {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
         {"usage_owner_type": "report_chat_session", "usage_owner_id": "42"},
+        {"token_usage_url": "https://usage.example.com/token-usage", "token_usage_api_key": "usage-key"},
     )
 
     assert reported is True
     assert payloads == [
-        {
-            "request_id": "invocation-123",
-            "model": "gpt-5.5",
-            "input_tokens": 10,
-            "cached_tokens": None,
-            "cache_write_tokens": None,
-            "output_tokens": 2,
-            "reasoning_tokens": None,
-            "total_tokens": 12,
-            "usage_owner_type": "report_chat_session",
-            "usage_owner_id": "42",
-        }
+        (
+            {
+                "request_id": "invocation-123",
+                "model": "gpt-5.5",
+                "input_tokens": 10,
+                "cached_tokens": None,
+                "cache_write_tokens": None,
+                "output_tokens": 2,
+                "reasoning_tokens": None,
+                "total_tokens": 12,
+                "usage_owner_type": "report_chat_session",
+                "usage_owner_id": "42",
+            },
+            {"token_usage_url": "https://usage.example.com/token-usage", "token_usage_api_key": "usage-key"},
+        )
     ]

@@ -7,8 +7,6 @@ import requests
 from dify_plugin.entities.model.message import TextPromptMessageContent
 
 
-_TOKEN_USAGE_URL = "https://geo.dev.vocscope.com/api/geo/v2/dify_llm/token-usage"
-_TOKEN_USAGE_API_KEY = "test_dify_1780389317_af8ade862225"
 _USAGE_CONTEXT_PATTERN = re.compile(r"<FP_USAGE_CONTEXT>(.*?)</FP_USAGE_CONTEXT>", re.DOTALL)
 _USAGE_OWNER_TYPES = {
     "dify_run_listing",
@@ -59,6 +57,7 @@ def normalize_usage(request_id: str, model: str, raw_usage: Optional[dict]) -> d
 
 def post_token_usage(
     payload: dict,
+    credentials: dict,
     *,
     timeout: tuple[int, int] = (3, 10),
 ) -> requests.Response:
@@ -68,9 +67,9 @@ def post_token_usage(
     return None
 
     response = requests.post(
-        _TOKEN_USAGE_URL,
+        str(credentials.get("token_usage_url") or "").strip(),
         headers={
-            "Authorization": f"Bearer {_TOKEN_USAGE_API_KEY}",
+            "Authorization": f"Bearer {str(credentials.get('token_usage_api_key') or '').strip()}",
             "Content-Type": "application/json",
         },
         json=payload,
@@ -108,6 +107,7 @@ def report_token_usage(
     model: str,
     raw_usage: Optional[dict],
     usage_context: Optional[dict[str, str]],
+    credentials: dict,
 ) -> bool:
     """Best-effort usage reporting; accounting failures must not fail the LLM call."""
     if not usage_context:
@@ -115,7 +115,7 @@ def report_token_usage(
     payload = normalize_usage(request_id, model, raw_usage)
     payload.update(usage_context)
     try:
-        post_token_usage(payload)
+        post_token_usage(payload, credentials)
     except requests.RequestException:
         return False
     return True

@@ -5,6 +5,7 @@ description = "Minimal Dify LLM provider plugin for OpenAI-compatible endpoints.
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "aliyun-log-python-sdk>=0.9.48",
     "dify_plugin>=0.9.0",
     "openai>=2.38.0",
     "pyyaml>=6.0.2",

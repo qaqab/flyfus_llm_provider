@@ -72,23 +72,21 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
     _GEO_PROMPT_REFERENCE_PATTERN = re.compile(
         r"\{\{geo_prompt:[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+@[A-Za-z0-9_-]+}}"
     )
-    _GEO_PROMPT_RENDER_URL = "https://www.flyfus.com/api/geo/v2/dify_prompt/render"
-    _GEO_PROMPT_API_KEY = "prod_dify_1782110522_f7082f8a4673"
     _REASONING_EFFORT_TOOL_NAME = "set_next_step"
     _REASONING_EFFORT_VALUES = {"low", "medium", "high", "xhigh"}
 
     @classmethod
-    def _render_geo_prompt_text(cls, text: str) -> str:
+    def _render_geo_prompt_text(cls, text: str, credentials: dict) -> str:
         """渲染一段包含 Geo Prompt 引用的文本。"""
         if not cls._GEO_PROMPT_REFERENCE_PATTERN.search(text):
             return text
 
         try:
             response = requests.post(
-                cls._GEO_PROMPT_RENDER_URL,
+                str(credentials.get("geo_prompt_render_url") or "").strip(),
                 headers={
                     "Content-Type": "application/json",
-                    "Authorization": f"Bearer {cls._GEO_PROMPT_API_KEY}",
+                    "Authorization": f"Bearer {str(credentials.get('geo_prompt_api_key') or '').strip()}",
                 },
                 json={"text": text},
                 timeout=(10, 60),
@@ -510,17 +508,17 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
             prompt_messages.insert(0, SystemPromptMessage(content=structured_output_prompt))
 
     @classmethod
-    def _render_geo_prompt_references(cls, prompt_messages: list[PromptMessage]) -> None:
+    def _render_geo_prompt_references(cls, prompt_messages: list[PromptMessage], credentials: dict) -> None:
         """渲染 system prompt 中的 Geo Prompt 引用。"""
         for prompt_message in prompt_messages:
             if prompt_message.role != PromptMessageRole.SYSTEM:
                 continue
             if not isinstance(prompt_message.content, str):
                 continue
-            prompt_message.content = cls._render_geo_prompt_text(prompt_message.content)
+            prompt_message.content = cls._render_geo_prompt_text(prompt_message.content, credentials)
 
     @classmethod
-    def _replace_tool_prompt_outputs(cls, prompt_messages: list[PromptMessage]) -> None:
+    def _replace_tool_prompt_outputs(cls, prompt_messages: list[PromptMessage], credentials: dict) -> None:
         """严格替换工具返回的 {"*_tool_prompt": "{{geo_prompt:...}}"}。"""
         for prompt_message in prompt_messages:
             if not isinstance(prompt_message, ToolPromptMessage):
@@ -531,7 +529,7 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
             reference_text = cls._extract_exact_tool_prompt_reference(prompt_message.content)
             if not reference_text:
                 continue
-            prompt_message.content = cls._render_geo_prompt_text(reference_text)
+            prompt_message.content = cls._render_geo_prompt_text(reference_text, credentials)
 
     @classmethod
     def _reasoning_effort_from_tool_messages(cls, prompt_messages: list[PromptMessage]) -> Optional[str]:
@@ -637,6 +635,7 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
                 model,
                 usage,
                 usage_context,
+                credentials,
             )
 
         invocation_log.set_request(
@@ -668,9 +667,9 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
                     include_files=family == "openai_responses",
                 )
             with invocation_log.step("geo_prompt_render"):
-                self._render_geo_prompt_references(prompt_messages)
+                self._render_geo_prompt_references(prompt_messages, credentials)
             with invocation_log.step("tool_prompt_replace"):
-                self._replace_tool_prompt_outputs(prompt_messages)
+                self._replace_tool_prompt_outputs(prompt_messages, credentials)
             with invocation_log.step("analyze_channel_drop"):
                 with suppress(Exception):
                     self._drop_analyze_channel(prompt_messages)

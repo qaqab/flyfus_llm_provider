@@ -134,7 +134,7 @@ class OpenAIResponsesAdapter:
         normalized_parameters = self._normalize_model_parameters(model, model_parameters)
         body: dict[str, Any] = {
             "model": model,
-            "input": self._convert_messages(credentials, prompt_messages),
+            "input": self._convert_messages(model, credentials, prompt_messages),
             "stream": stream,
         }
 
@@ -164,14 +164,16 @@ class OpenAIResponsesAdapter:
         if text_format:
             body["text"] = {"format": text_format}
 
-        converted_tools = self._convert_tools(tools)
+        converted_tools = self._convert_tools(tools) or []
+        if self._grok_web_search_enabled(model, normalized_parameters):
+            converted_tools.append({"type": "web_search"})
         if converted_tools:
             body["tools"] = converted_tools
             body.setdefault("tool_choice", "auto")
 
         return body
 
-    def _convert_messages(self, credentials: dict, prompt_messages: list[PromptMessage]) -> list[dict]:
+    def _convert_messages(self, model: str, credentials: dict, prompt_messages: list[PromptMessage]) -> list[dict]:
         input_items: list[dict] = []
         for message in prompt_messages:
             if isinstance(message, SystemPromptMessage):
@@ -187,7 +189,7 @@ class OpenAIResponsesAdapter:
                     {
                         "type": "message",
                         "role": "user",
-                        "content": self._user_content_parts(credentials, message.content),
+                        "content": self._user_content_parts(model, credentials, message.content),
                     }
                 )
             elif isinstance(message, AssistantPromptMessage):
@@ -231,7 +233,7 @@ class OpenAIResponsesAdapter:
             )
         return ""
 
-    def _user_content_parts(self, credentials: dict, content: object) -> str | list[dict]:
+    def _user_content_parts(self, model: str, credentials: dict, content: object) -> str | list[dict]:
         if isinstance(content, str):
             return content
         if not isinstance(content, list):
@@ -242,13 +244,13 @@ class OpenAIResponsesAdapter:
             if part.type == PromptMessageContentType.TEXT:
                 text_part: TextPromptMessageContent = part
                 content_parts.append({"type": "input_text", "text": text_part.data})
-            elif part.type == PromptMessageContentType.IMAGE:
+            elif part.type == PromptMessageContentType.IMAGE and self._supports_attachments(model):
                 image_part: ImagePromptMessageContent = part
                 item = {"type": "input_image", "image_url": image_part.data}
                 if image_part.detail:
                     item["detail"] = image_part.detail.value
                 content_parts.append(item)
-            elif part.type == PromptMessageContentType.DOCUMENT:
+            elif part.type == PromptMessageContentType.DOCUMENT and self._supports_attachments(model):
                 document_part: DocumentPromptMessageContent = part
                 document_url = getattr(document_part, "url", "") or ""
                 if document_part.format == "url" and document_url:
@@ -272,6 +274,20 @@ class OpenAIResponsesAdapter:
                         }
                     )
         return content_parts
+
+    @staticmethod
+    def _supports_attachments(model: str) -> bool:
+        return not model.lower().startswith("grok-")
+
+    @staticmethod
+    def _grok_web_search_enabled(model: str, model_parameters: dict) -> bool:
+        if not model.lower().startswith("grok-"):
+            return False
+        search_parameters = model_parameters.get("search_parameters")
+        if isinstance(search_parameters, str):
+            with suppress(ValueError):
+                search_parameters = json.loads(search_parameters)
+        return isinstance(search_parameters, dict) and search_parameters.get("mode") == "on"
 
     def _upload_file(self, credentials: dict, document_content: DocumentPromptMessageContent) -> Optional[str]:
         filename = document_content.filename or "document"

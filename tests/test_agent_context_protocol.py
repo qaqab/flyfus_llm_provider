@@ -2,6 +2,7 @@ import json
 
 from dify_plugin.entities.model.message import (
     DocumentPromptMessageContent,
+    ImagePromptMessageContent,
     PromptMessageContentType,
     SystemPromptMessage,
     TextPromptMessageContent,
@@ -196,6 +197,46 @@ def test_responses_adapter_sends_context_file_url_as_input_file() -> None:
     ]
 
 
+def test_grok_responses_omits_attachments_and_enables_web_search() -> None:
+    adapter = OpenAIResponsesAdapter(
+        endpoint_url=lambda credentials, path: f"https://api.openai.com/v1/{path}",
+        request_headers=lambda credentials: {"Authorization": "Bearer test"},
+        normalize_model_parameters=lambda model, params: params,
+        calc_response_usage=lambda *args: None,
+        create_final_chunk=lambda **kwargs: None,
+    )
+    message = UserPromptMessage(
+        content=[
+            TextPromptMessageContent(data="search this"),
+            ImagePromptMessageContent(
+                format="url",
+                url="https://cdn.example.com/image.png",
+                mime_type="image/png",
+            ),
+            DocumentPromptMessageContent(
+                format="url",
+                url="https://cdn.example.com/report.pdf",
+                filename="report.pdf",
+                mime_type="application/pdf",
+            ),
+        ]
+    )
+
+    body = adapter._build_body(
+        model="grok-4.5",
+        credentials={},
+        prompt_messages=[message],
+        model_parameters={"search_parameters": '{"mode":"on"}'},
+        tools=None,
+        stop=None,
+        stream=False,
+        user=None,
+    )
+
+    assert body["input"][0]["content"] == [{"type": "input_text", "text": "search this"}]
+    assert body["tools"] == [{"type": "web_search"}]
+
+
 def test_user_text_protocol_reaches_responses_body_as_input_image() -> None:
     adapter = OpenAIResponsesAdapter(
         endpoint_url=lambda credentials, path: f"https://api.openai.com/v1/{path}",
@@ -244,7 +285,7 @@ def test_tool_prompt_output_is_replaced_when_exact_protocol(monkeypatch) -> None
     monkeypatch.setattr(
         FlypowerLargeLanguageModel,
         "_render_geo_prompt_text",
-        classmethod(lambda cls, text: text.replace("{{geo_prompt:flyfus-agent.flyfus-skill-listing-diagnosis@dev}}", "Rendered diagnosis skill")),
+        classmethod(lambda cls, text, credentials: text.replace("{{geo_prompt:flyfus-agent.flyfus-skill-listing-diagnosis@dev}}", "Rendered diagnosis skill")),
     )
     prompt_messages = [
         SystemPromptMessage(content="Base system prompt"),
@@ -285,7 +326,7 @@ def test_tool_prompt_output_is_replaced_when_exact_protocol(monkeypatch) -> None
         ),
     ]
 
-    FlypowerLargeLanguageModel._replace_tool_prompt_outputs(prompt_messages)
+    FlypowerLargeLanguageModel._replace_tool_prompt_outputs(prompt_messages, {})
 
     assert len(prompt_messages) == 4
     assert isinstance(prompt_messages[0], SystemPromptMessage)
@@ -299,7 +340,7 @@ def test_tool_prompt_requires_exact_shape(monkeypatch) -> None:
     monkeypatch.setattr(
         FlypowerLargeLanguageModel,
         "_render_geo_prompt_text",
-        classmethod(lambda cls, text: "Rendered skill"),
+        classmethod(lambda cls, text, credentials: "Rendered skill"),
     )
     prompt_messages = [
         SystemPromptMessage(content="Base system prompt"),
@@ -346,7 +387,7 @@ def test_tool_prompt_requires_exact_shape(monkeypatch) -> None:
         ),
     ]
 
-    FlypowerLargeLanguageModel._replace_tool_prompt_outputs(prompt_messages)
+    FlypowerLargeLanguageModel._replace_tool_prompt_outputs(prompt_messages, {})
 
     assert prompt_messages[0].content == "Base system prompt"
     assert prompt_messages[1].content == "{{geo_prompt:flyfus-agent.flyfus-skill-listing-diagnosis@dev}}"
