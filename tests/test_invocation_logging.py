@@ -1,4 +1,5 @@
 import pytest
+from types import SimpleNamespace
 
 from models.llm.invocation_logging import InvocationLog, wrap_stream_with_invocation_log
 
@@ -117,6 +118,7 @@ def test_invocation_log_keeps_error_details_without_success_result(monkeypatch) 
 
 def test_stream_wrapper_flushes_on_success(monkeypatch) -> None:
     flushed = []
+    usages = []
     invocation_log = InvocationLog.from_credentials(
         model="gpt-5.4",
         credentials={},
@@ -125,13 +127,20 @@ def test_stream_wrapper_flushes_on_success(monkeypatch) -> None:
     )
     monkeypatch.setattr(invocation_log, "flush", lambda: flushed.append(True))
 
-    chunks = list(wrap_stream_with_invocation_log(iter(["a", "b"]), invocation_log))
+    chunks = list(
+        wrap_stream_with_invocation_log(
+            iter(["a", "b"]),
+            invocation_log,
+            lambda usage: usages.append(usage),
+        )
+    )
 
     assert chunks == ["a", "b"]
     assert invocation_log.result == {"status": "success", "chunk_count": 2, "output_text": "ab"}
     assert invocation_log.response["output_text"] == "ab"
     assert invocation_log.response["chunk_count"] == 2
     assert flushed == [True]
+    assert usages == [None]
 
 
 def test_stream_wrapper_flushes_on_error(monkeypatch) -> None:
@@ -154,3 +163,15 @@ def test_stream_wrapper_flushes_on_error(monkeypatch) -> None:
     assert invocation_log.result["status"] == "error"
     assert invocation_log.result["error_type"] == "RuntimeError"
     assert flushed == [True]
+
+
+def test_stream_wrapper_reports_raw_usage_once(monkeypatch) -> None:
+    usages = []
+    invocation_log = InvocationLog.from_credentials(model="gpt-5.4", credentials={}, stream=True, user=None)
+    monkeypatch.setattr(invocation_log, "flush", lambda: None)
+    usage = SimpleNamespace(prompt_tokens=9, completion_tokens=4, total_tokens=13)
+    chunk = SimpleNamespace(delta=SimpleNamespace(message=None, finish_reason="stop", usage=usage))
+
+    list(wrap_stream_with_invocation_log(iter([chunk]), invocation_log, usages.append))
+
+    assert usages == [usage]

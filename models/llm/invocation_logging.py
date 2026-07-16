@@ -3,7 +3,7 @@ import time
 import traceback
 import uuid
 import json
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import datetime, timezone
 from typing import Any, Iterator, Optional
 
@@ -100,6 +100,10 @@ class InvocationLog:
         if self.flushed:
             return
         self.flushed = True
+
+        # Temporary: keep invocation data local until the logging backend is ready.
+        # Remove this return to re-enable Axiom uploads.
+        return
 
         token = (
             self.credentials.get("axiom_api_token")
@@ -217,13 +221,19 @@ class InvocationLog:
             return
 
 
-def wrap_stream_with_invocation_log(stream_result, invocation_log: InvocationLog):
+def wrap_stream_with_invocation_log(stream_result, invocation_log: InvocationLog, usage_reporter=None):
     chunk_count = 0
     output_parts: list[str] = []
+    usage = None
     try:
         for chunk in stream_result:
             chunk_count += 1
+            raw_usage = getattr(getattr(chunk, "delta", None), "usage", None)
+            if raw_usage is not None:
+                usage = raw_usage
             chunk_summary = llm_chunk_summary(chunk)
+            if usage is None and chunk_summary.get("usage") is not None:
+                usage = chunk_summary["usage"]
             chunk_text = chunk_summary.get("text")
             if isinstance(chunk_text, str) and chunk_text:
                 output_parts.append(chunk_text)
@@ -242,6 +252,9 @@ def wrap_stream_with_invocation_log(stream_result, invocation_log: InvocationLog
             chunk_count=chunk_count,
         )
         invocation_log.success(chunk_count=chunk_count, output_text=output_text)
+        if usage_reporter is not None:
+            with suppress(Exception):
+                usage_reporter(usage or invocation_log.response.get("usage"))
     finally:
         invocation_log.flush()
 

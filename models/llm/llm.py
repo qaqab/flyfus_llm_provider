@@ -41,6 +41,7 @@ from models.llm.invocation_logging import (
 )
 from models.llm.native.base import model_family
 from models.llm.native.openai_responses import OpenAIResponsesAdapter
+from models.llm.usage_reporting import extract_usage_context, report_token_usage
 
 
 _ACTIVE_INVOCATION_LOG: ContextVar[Optional[InvocationLog]] = ContextVar(
@@ -580,6 +581,16 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
             stream=stream,
             user=user,
         )
+        usage_context = extract_usage_context(prompt_messages)
+
+        def usage_reporter(usage):
+            return report_token_usage(
+                invocation_log.invocation_id,
+                model,
+                usage,
+                usage_context,
+            )
+
         invocation_log.set_request(
             model=model,
             stream=stream,
@@ -665,10 +676,11 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
                         invocation_log=invocation_log,
                     )
                 if stream:
-                    return wrap_stream_with_invocation_log(result, invocation_log)
+                    return wrap_stream_with_invocation_log(result, invocation_log, usage_reporter)
                 result_summary = llm_result_summary(result)
                 invocation_log.set_response(**result_summary)
                 invocation_log.success(result_type=type(result).__name__, output_text=result_summary.get("output_text"))
+                usage_reporter(getattr(result, "usage", None))
                 return result
 
             with invocation_log.step("json_schema_prompt_apply"):
@@ -704,10 +716,11 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
                     user=user,
                 )
             if stream:
-                return wrap_stream_with_invocation_log(result, invocation_log)
+                return wrap_stream_with_invocation_log(result, invocation_log, usage_reporter)
             result_summary = llm_result_summary(result)
             invocation_log.set_response(**result_summary)
             invocation_log.success(result_type=type(result).__name__, output_text=result_summary.get("output_text"))
+            usage_reporter(getattr(result, "usage", None))
             return result
         except Exception as error:
             invocation_log.failure(error)
