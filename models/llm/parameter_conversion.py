@@ -21,6 +21,8 @@ WEB_SEARCH_MODELS = frozenset(
     }
 )
 
+# Gemini 走原生 generateContent 协议。它的 Google 搜索工具字段与 OpenAI
+# Responses 的 web_search 不兼容，必须由同一个公共入口按模型路由转换。
 GEMINI_WEB_SEARCH_MODELS = frozenset(
     {
         "gemini-3-flash-preview",
@@ -100,29 +102,23 @@ def normalize_max_tokens(parameters: dict, target_parameter_name: str) -> None:
 
 
 def build_web_search_tool(model: str, parameters: dict) -> Optional[dict]:
-    """根据显式开关为支持的 Responses 模型构造联网搜索工具。
+    """根据模型协议把统一的联网搜索开关转换为上游工具对象。
 
-    ``WEB_SEARCH_MODELS`` 是已通过中转站验证的白名单。只有模型在白名单内且
-    ``enable_web_search is True`` 时才返回 ``{"type": "web_search"}``；``False``、
-    参数缺失、字符串 ``"true"`` 或不支持的模型一律返回 ``None``。严格比较真正
-    的布尔 ``True`` 可避免页面默认值、旧配置或脚本字符串意外开启外部搜索。
+    页面和 YAML 始终使用 ``enable_web_search``。GPT/Grok 的 Responses 协议转换为
+    ``{"type": "web_search"}``；Gemini 原生 generateContent 协议转换为
+    ``{"google_search": {}}``。两者不能混用：Gemini 收到前者会被上游以 400 拒绝。
 
-    返回值由 Responses 适配器追加到请求的 ``tools`` 数组中。此方法不执行搜索，
-    也不把任意 URL 自动抓取；是否调用工具仍由上游模型在 ``tool_choice: auto``
-    下根据问题自行决定。
+    两份白名单均经过中转站实测。只有开关是布尔 ``True`` 时才返回工具；``False``、
+    缺失、字符串 ``"true"`` 和不支持的模型一律返回 ``None``，避免旧配置或文本值
+    意外开启外部搜索。
+
+    返回值由相应协议适配器追加到请求 ``tools`` 数组。此方法不执行搜索，也不抓取
+    任意 URL；是否调用搜索仍由上游模型按用户问题自行决定。
     """
-    if model.lower() not in WEB_SEARCH_MODELS or parameters.get("enable_web_search") is not True:
+    if parameters.get("enable_web_search") is not True:
         return None
-    return {"type": "web_search"}
-
-
-def build_gemini_web_search_tool(model: str, parameters: dict) -> Optional[dict]:
-    """构造 Gemini 原生 ``googleSearch`` 工具。
-
-    Gemini ``generateContent`` 使用 ``tools: [{"googleSearch": {}}]``，与 OpenAI
-    Responses 的 ``{"type": "web_search"}`` 不兼容。只有已验证模型且页面开关为
-    真正的布尔 ``True`` 时才发送，避免关闭开关后仍发生外部搜索。
-    """
-    if model.lower() not in GEMINI_WEB_SEARCH_MODELS or parameters.get("enable_web_search") is not True:
-        return None
-    return {"googleSearch": {}}
+    if model.lower() in GEMINI_WEB_SEARCH_MODELS:
+        return {"google_search": {}}
+    if model.lower() in WEB_SEARCH_MODELS:
+        return {"type": "web_search"}
+    return None

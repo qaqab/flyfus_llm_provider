@@ -15,7 +15,8 @@ from dify_plugin.entities.model.message import (
 )
 from dify_plugin.errors.model import InvokeError
 
-from models.llm.parameter_conversion import build_gemini_web_search_tool
+from models.llm.parameter_conversion import build_web_search_tool
+
 
 
 class GeminiNativeDocumentAdapter:
@@ -86,7 +87,7 @@ class GeminiNativeDocumentAdapter:
             body["generationConfig"] = generation_config
 
         gemini_tools = self._convert_tools(tools or [])
-        web_search_tool = build_gemini_web_search_tool(model, normalized_parameters)
+        web_search_tool = build_web_search_tool(model, normalized_parameters)
         if web_search_tool:
             gemini_tools.append(web_search_tool)
         if gemini_tools:

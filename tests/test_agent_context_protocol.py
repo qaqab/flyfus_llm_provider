@@ -14,12 +14,7 @@ from models.llm.agent_context import inject_context_from_tool_messages
 from models.llm.llm import FlypowerLargeLanguageModel
 from models.llm.native.gemini import GeminiNativeDocumentAdapter
 from models.llm.native.openai_responses import OpenAIResponsesAdapter
-from models.llm.parameter_conversion import (
-    build_gemini_web_search_tool,
-    build_web_search_tool,
-    normalize_generation_parameters,
-    normalize_max_tokens,
-)
+from models.llm.parameter_conversion import build_web_search_tool, normalize_generation_parameters, normalize_max_tokens
 
 
 class FakeResponse:
@@ -281,6 +276,34 @@ def test_web_search_enabled_models_omit_attachments_and_enable_web_search() -> N
     assert build_web_search_tool("high", {"enable_web_search": True}) is None
     assert build_web_search_tool("gpt-5.4", {}) is None
     assert build_web_search_tool("gpt-5.4", {"enable_web_search": True}) == {"type": "web_search"}
+    assert build_web_search_tool("gemini-3-flash-preview", {"enable_web_search": True}) == {"google_search": {}}
+
+
+def test_gemini_web_search_uses_native_google_search_tool() -> None:
+    adapter = GeminiNativeDocumentAdapter(
+        endpoint_url=lambda credentials, path: f"https://example.com/{path}",
+        normalize_model_parameters=lambda model, params: params,
+        calc_response_usage=lambda *args: None,
+    )
+    message = UserPromptMessage(content="search current news")
+
+    enabled_body = adapter.build_body(
+        model="gemini-3-flash-preview",
+        prompt_messages=[message],
+        model_parameters={"enable_web_search": True},
+        tools=None,
+        stop=None,
+    )
+    disabled_body = adapter.build_body(
+        model="gemini-3-flash-preview",
+        prompt_messages=[message],
+        model_parameters={"enable_web_search": False},
+        tools=None,
+        stop=None,
+    )
+
+    assert enabled_body["tools"] == [{"google_search": {}}]
+    assert "tools" not in disabled_body
 
 
 def test_generation_parameters_are_normalized_at_the_shared_parameter_boundary() -> None:
@@ -538,14 +561,6 @@ def test_gemini_function_calls_are_converted_for_dify() -> None:
     assert len(tool_calls) == 1
     assert tool_calls[0].function.name == "lookup_code"
     assert tool_calls[0].function.arguments == '{"id": 7}'
-
-
-def test_gemini_web_search_is_explicit_and_model_scoped() -> None:
-    assert build_gemini_web_search_tool("gemini-3-flash-preview", {"enable_web_search": True}) == {
-        "googleSearch": {}
-    }
-    assert build_gemini_web_search_tool("gemini-3-flash-preview", {"enable_web_search": False}) is None
-    assert build_gemini_web_search_tool("gpt-5.5", {"enable_web_search": True}) is None
 
 
 def _context_output(payload: dict) -> dict:
