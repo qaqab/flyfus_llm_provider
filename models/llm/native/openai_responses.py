@@ -22,6 +22,7 @@ from dify_plugin.errors.model import InvokeError
 
 from models.llm.invocation_logging import http_response_summary, responses_payload_summary
 from models.llm.native.base import file_bytes
+from models.llm.parameter_conversion import build_web_search_tool
 
 
 def _debug(message: str, *args: object) -> None:
@@ -165,8 +166,9 @@ class OpenAIResponsesAdapter:
             body["text"] = {"format": text_format}
 
         converted_tools = self._convert_tools(tools) or []
-        if self._grok_web_search_enabled(model, normalized_parameters):
-            converted_tools.append({"type": "web_search"})
+        web_search_tool = build_web_search_tool(model, normalized_parameters)
+        if web_search_tool:
+            converted_tools.append(web_search_tool)
         if converted_tools:
             body["tools"] = converted_tools
             body.setdefault("tool_choice", "auto")
@@ -278,16 +280,6 @@ class OpenAIResponsesAdapter:
     @staticmethod
     def _supports_attachments(model: str) -> bool:
         return not model.lower().startswith("grok-")
-
-    @staticmethod
-    def _grok_web_search_enabled(model: str, model_parameters: dict) -> bool:
-        if not model.lower().startswith("grok-"):
-            return False
-        search_parameters = model_parameters.get("search_parameters")
-        if isinstance(search_parameters, str):
-            with suppress(ValueError):
-                search_parameters = json.loads(search_parameters)
-        return isinstance(search_parameters, dict) and search_parameters.get("mode") == "on"
 
     def _upload_file(self, credentials: dict, document_content: DocumentPromptMessageContent) -> Optional[str]:
         filename = document_content.filename or "document"

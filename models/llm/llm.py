@@ -39,6 +39,7 @@ from models.llm.invocation_logging import (
     upstream_openai_compatible_request_summary,
     wrap_stream_with_invocation_log,
 )
+from models.llm.parameter_conversion import normalize_generation_parameters, normalize_max_tokens
 from models.llm.native.base import model_family
 from models.llm.native.openai_responses import OpenAIResponsesAdapter
 from models.llm.usage_reporting import extract_usage_context, report_token_usage
@@ -206,28 +207,35 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
         return model_ids
 
     def _normalize_model_parameters(self, model: str, model_parameters: dict) -> dict:
-        """整理模型调用参数。
+        """生成一次调用专用的参数副本，并按固定顺序完成所有转换。
 
-        Dify 页面上使用 max_tokens 这个通用参数名。默认继续发送 max_tokens；
-        只有模型配置明确要求时，才转换为 max_completion_tokens。
+        原始 ``model_parameters`` 可能会在 Dify 的后续节点、重试或日志中继续使用，
+        因此这里必须先复制，绝不能原地修改调用方对象。转换顺序也有含义：
+
+        1. 规范化温度、Top P 和回复格式等通用页面参数；
+        2. 根据 YAML 决定输出 token 字段应为 ``max_tokens`` 还是
+           ``max_completion_tokens``；
+        3. 根据 YAML 的 ``extra.thinking`` 把统一的思考控制转换成供应商字段。
+
+        返回值是即将发送给原生适配器的参数字典。网络搜索不在这里写入，因为它在
+        Responses 请求体构建阶段作为 ``tools`` 数组的一部分处理。
         """
         normalized_parameters = dict(model_parameters)
-        if (
-            self._token_param_name(model) == "max_completion_tokens"
-            and "max_completion_tokens" not in normalized_parameters
-            and "max_tokens" in normalized_parameters
-        ):
-            normalized_parameters["max_completion_tokens"] = normalized_parameters.pop("max_tokens")
+        normalize_generation_parameters(model, normalized_parameters)
+        normalize_max_tokens(normalized_parameters, self._token_param_name(model))
 
         self._apply_thinking_parameters(model, normalized_parameters)
         return normalized_parameters
 
     @classmethod
     def _token_param_name(cls, model: str) -> str:
-        """选择上游 token 上限参数名。
+        """从模型 YAML 选择上游输出 token 上限字段名。
 
-        可在模型 YAML 中通过 ``extra.token_param_name`` 显式配置：
-        ``max_tokens`` 或 ``max_completion_tokens``。未配置时保持 max_tokens。
+        Dify 前端只展示 ``max_tokens``，但部分 OpenAI 兼容模型要求使用
+        ``max_completion_tokens``。YAML 可通过 ``extra.token_param_name`` 显式声明
+        其中之一；只有这两个白名单值才会被采用，缺失、拼写错误或未知值均回退到
+        ``max_tokens``。回退策略是为了让新模型在未添加额外配置时仍保持标准兼容
+        行为，而不是把无效配置直接传给上游。
         """
         configured_name = cls._load_model_extra(model).get("token_param_name")
         if configured_name in {"max_tokens", "max_completion_tokens"}:
@@ -247,8 +255,20 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
         - ``openrouter``：上游接收 ``reasoning`` 对象。
         - ``chat_template_kwargs``：上游运行时从模板参数读取思考开关。
 
-        如果 YAML 没有声明 ``extra.thinking``，这里会移除 Dify 页面上可能带来的
-        thinking 参数，避免把未知私有参数发给不支持的模型。
+        前端公共参数与上游参数不是一一对应关系。这个入口先取出公共参数，随后
+        分别交给三个独立方法处理：
+
+        - ``_apply_enable_thinking``：是否让模型执行思考过程；
+        - ``_apply_thinking_budget``：思考过程允许消耗的 token 预算；
+        - ``_apply_reasoning_effort``：推理深度/强度档位。
+
+        这样模型 YAML 只负责声明 ``mode``，而具体的字段转换集中在这里，避免
+        调用路径到处出现 ``if model == ...``。函数会先 ``pop`` 前端专用字段，
+        以保证未在 YAML 中声明支持方式的模型不会把未知参数原样传给上游。
+
+        ``thinking_level`` 与 ``include_thoughts`` 是 Gemini 专属参数：前者决定
+        推理级别，后者决定是否在响应中返回思考内容。它们不是公共三项的一部分，
+        因为“开启思考”不等同于“展示思考内容”。
         """
         enable_thinking = model_parameters.pop("enable_thinking", None)
         thinking = model_parameters.pop("thinking", None)
@@ -262,35 +282,10 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
             return
 
         mode = thinking_config.get("mode", "none")
-        thinking_enabled: Optional[bool] = None
-        if enable_thinking is not None:
-            thinking_enabled = self._to_bool(enable_thinking)
-            if mode == "top_level":
-                model_parameters["enable_thinking"] = thinking_enabled
-            elif mode == "deepseek":
-                model_parameters["thinking"] = {"type": "enabled" if thinking_enabled else "disabled"}
-            elif mode == "openrouter":
-                model_parameters.setdefault("reasoning", {})["enabled"] = thinking_enabled
-            elif mode == "zhipu":
-                model_parameters["thinking"] = {"type": "enabled" if thinking_enabled else "disabled"}
-            elif mode == "chat_template_kwargs":
-                template_kwargs = model_parameters.setdefault("chat_template_kwargs", {})
-                template_kwargs["enable_thinking"] = thinking_enabled
-                template_kwargs["thinking"] = thinking_enabled
-            elif mode == "minimax":
-                minimax_thinking = self._minimax_thinking_payload(thinking_enabled, thinking_budget)
-                if minimax_thinking:
-                    model_parameters["thinking"] = minimax_thinking
-
-        if thinking_budget is not None:
-            if mode == "top_level":
-                model_parameters["thinking_budget"] = thinking_budget
-            elif mode == "openrouter":
-                model_parameters.setdefault("reasoning", {})["max_tokens"] = thinking_budget
-            elif mode == "gemini":
-                model_parameters.setdefault("thinking_config", {})["thinking_budget"] = thinking_budget
-            elif mode == "minimax" and thinking_enabled is not False and "thinking" not in model_parameters:
-                model_parameters["thinking"] = self._minimax_thinking_payload(True, thinking_budget)
+        thinking_enabled = self._apply_enable_thinking(
+            model_parameters, mode, enable_thinking, thinking_budget
+        )
+        self._apply_thinking_budget(model_parameters, mode, thinking_enabled, thinking_budget)
 
         if thinking_level is not None:
             if mode == "gemini":
@@ -305,6 +300,92 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
         if exclude_reasoning_tokens is not None and mode == "openrouter":
             model_parameters.setdefault("reasoning", {})["exclude"] = bool(exclude_reasoning_tokens)
 
+        self._apply_reasoning_effort(model_parameters, mode, thinking_config)
+
+    def _apply_enable_thinking(
+        self, model_parameters: dict, mode: str, enable_thinking: object, thinking_budget: object
+    ) -> Optional[bool]:
+        """将统一的“开启思考”参数转换为各模型实际接受的字段。
+
+        Dify 页面统一使用 ``enable_thinking: bool``。不同上游对同一语义使用的
+        请求格式如下：
+
+        - ``top_level``：GLM/Qwen/Kimi 一类，直接发送 ``enable_thinking``；
+        - ``deepseek`` / ``zhipu``：发送 ``thinking: {"type": "enabled"}``；
+        - ``openrouter``：发送 ``reasoning: {"enabled": true}``；
+        - ``chat_template_kwargs``：把值放入兼容层模板参数；
+        - ``minimax``：构造带 ``budget_tokens`` 的 Anthropic 风格 ``thinking``。
+
+        返回归一化后的布尔值，供 ``_apply_thinking_budget`` 判断。例如用户明确
+        关闭思考时，MiniMax 不应再因为有预算值而被重新开启。``mode == 'none'``
+        没有分支，意味着参数会被消费但不会转发，防止不支持该参数的模型报错。
+        """
+        if enable_thinking is None:
+            return None
+
+        thinking_enabled = self._to_bool(enable_thinking)
+        if mode == "top_level":
+            model_parameters["enable_thinking"] = thinking_enabled
+        elif mode in {"deepseek", "zhipu"}:
+            model_parameters["thinking"] = {"type": "enabled" if thinking_enabled else "disabled"}
+        elif mode == "openrouter":
+            model_parameters.setdefault("reasoning", {})["enabled"] = thinking_enabled
+        elif mode == "chat_template_kwargs":
+            template_kwargs = model_parameters.setdefault("chat_template_kwargs", {})
+            template_kwargs["enable_thinking"] = thinking_enabled
+            template_kwargs["thinking"] = thinking_enabled
+        elif mode == "minimax":
+            minimax_thinking = self._minimax_thinking_payload(thinking_enabled, thinking_budget)
+            if minimax_thinking:
+                model_parameters["thinking"] = minimax_thinking
+        return thinking_enabled
+
+    def _apply_thinking_budget(
+        self, model_parameters: dict, mode: str, thinking_enabled: Optional[bool], thinking_budget: object
+    ) -> None:
+        """将统一的“思考预算”参数转换为各模型实际接受的字段。
+
+        页面参数 ``thinking_budget`` 表示“模型内部推理最多可用多少 token”，不等同
+        于普通输出上限 ``max_tokens``。各模式的转换为：
+
+        - ``top_level``：发送 ``thinking_budget``；
+        - ``openrouter``：发送 ``reasoning.max_tokens``；
+        - ``gemini``：发送 ``thinking_config.thinking_budget``；
+        - ``minimax``：并入 ``thinking.budget_tokens``。
+
+        MiniMax 有一个额外约束：当用户显式关闭 ``enable_thinking`` 时，预算不能
+        单独生成 ``thinking`` 对象，否则“关闭思考”会被预算反向打开。对于没有
+        思考映射的 ``mode``，预算在这里被丢弃，避免把供应商私有字段误传出去。
+        """
+        if thinking_budget is None:
+            return
+        if mode == "top_level":
+            model_parameters["thinking_budget"] = thinking_budget
+        elif mode == "openrouter":
+            model_parameters.setdefault("reasoning", {})["max_tokens"] = thinking_budget
+        elif mode == "gemini":
+            model_parameters.setdefault("thinking_config", {})["thinking_budget"] = thinking_budget
+        elif mode == "minimax" and thinking_enabled is not False and "thinking" not in model_parameters:
+            model_parameters["thinking"] = self._minimax_thinking_payload(True, thinking_budget)
+
+    @staticmethod
+    def _apply_reasoning_effort(model_parameters: dict, mode: str, thinking_config: dict) -> None:
+        """将统一的“推理强度”参数转换为各模型实际接受的字段。
+
+        ``reasoning_effort`` 是前端的档位参数，例如 ``low``、``medium``、``high``。
+        它与布尔的 ``enable_thinking`` 不同：前者调整已开启推理的深度，后者决定
+        是否执行推理。实际字段由 YAML 决定：
+
+        - ``reasoning_effort_target: chat_template_kwargs``：兼容 Chat Completions
+          模型时放入 ``chat_template_kwargs.reasoning_effort``；
+        - ``mode: openrouter``：转换为 ``reasoning.effort``，并只接受已确认的
+          ``high``、``medium``、``low``、``minimal``、``none``，非法值不发送。
+
+        未声明上述映射的模型会保留原有参数处理路径。例如 GPT/Grok 的 Responses
+        适配器会直接读取 ``reasoning_effort``，并生成
+        ``reasoning: {"effort": ...}``，这里不能提前 ``pop``，否则会导致它们的
+        推理强度失效。
+        """
         if thinking_config.get("reasoning_effort_target") == "chat_template_kwargs":
             reasoning_effort = model_parameters.get("reasoning_effort")
             if reasoning_effort is not None:
@@ -316,12 +397,19 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
 
     @staticmethod
     def _to_bool(value: object) -> bool:
-        """把 Dify 页面参数安全转换成布尔值。
+        """把页面、脚本或旧配置传入的开关值安全归一化为真正的布尔值。
 
-        正常情况下 Dify 会按 YAML 的 ``type: boolean`` 传入真正的 bool。但在
-        调试、脚本调用或不同 SDK 版本下，也可能收到 ``"false"``、``"0"``、
-        ``"disabled"`` 这类字符串。Python 的 ``bool("false")`` 会得到 True，
-        所以这里单独做一次归一化，避免思考开关被反向打开。
+        标准 Dify 页面会根据 YAML 的 ``type: boolean`` 传入 ``True`` 或 ``False``，
+        此时直接返回，避免把布尔值意外当成字符串处理。实际运行中也会遇到三种
+        非标准来源：旧版本保存的字符串、调试脚本的字符串，以及其他插件转交的
+        数字/对象。
+
+        对字符串先 ``strip().lower()``，再把 ``""``、``"0"``、``"false"``、
+        ``"no"``、``"off"``、``"disabled"`` 统一认定为关闭；其它非空字符串
+        认定为开启。之所以不能直接使用 Python 的 ``bool(value)``，是因为
+        ``bool("false")`` 和 ``bool("0")`` 都是 ``True``，会把用户关闭思考的
+        配置反向打开。非字符串值最终使用 Python 原生真值规则，保证数值 ``0``
+        为关闭、非零数值为开启。
         """
         if isinstance(value, bool):
             return value
@@ -331,11 +419,19 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
 
     @staticmethod
     def _minimax_thinking_payload(enabled: bool, thinking_budget: Optional[int]) -> Optional[dict]:
-        """构造 MiniMax Anthropic-compatible thinking 参数。
+        """构造 MiniMax 的 Anthropic-compatible ``thinking`` 请求对象。
 
-        MiniMax 的 thinking 参数和普通布尔开关不同：开启时必须带
-        ``budget_tokens``，关闭时不发送 thinking 字段即可。这里强制最低 1024，
-        是因为 Anthropic-compatible thinking 通常要求预算不能太小。
+        多数模型把“是否思考”和“思考预算”拆成顶层字段；MiniMax 的兼容接口要求
+        把两者合并为 ``thinking: {"type": "enabled", "budget_tokens": N}``。
+        因此该方法是唯一应构造这个供应商私有对象的位置，调用方不需要知道其字段
+        细节。
+
+        ``enabled=False`` 时返回 ``None``，调用方据此完全省略 ``thinking`` 字段，
+        而不是发送 ``{"type": "disabled"}``。这是该兼容协议的关闭语义，也避免
+        上游把带预算的对象仍当作开启思考。开启时，未填预算使用 1024，低于 1024
+        的输入也抬升到 1024；该下限保护来自 Anthropic-compatible thinking 对最小
+        预算的常见要求。数值转换在这里集中处理，确保页面传入的 int 与脚本传入的
+        可转换数值走同一条路径。
         """
         if not enabled:
             return None

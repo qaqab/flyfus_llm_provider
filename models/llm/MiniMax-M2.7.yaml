@@ -63,4 +63,6 @@ pricing:
   currency: USD
 extra:
   thinking:
-    mode: minimax
+    # Flypower 中转站接收 OpenAI-compatible 的顶层思考字段，
+    # 不接受 Anthropic 风格的 thinking.budget_tokens 对象。
+    mode: top_level

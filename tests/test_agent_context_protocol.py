@@ -13,6 +13,7 @@ from dify_plugin.entities.model.message import (
 from models.llm.agent_context import inject_context_from_tool_messages
 from models.llm.llm import FlypowerLargeLanguageModel
 from models.llm.native.openai_responses import OpenAIResponsesAdapter
+from models.llm.parameter_conversion import build_web_search_tool, normalize_generation_parameters, normalize_max_tokens
 
 
 class FakeResponse:
@@ -197,7 +198,7 @@ def test_responses_adapter_sends_context_file_url_as_input_file() -> None:
     ]
 
 
-def test_grok_responses_omits_attachments_and_enables_web_search() -> None:
+def test_web_search_enabled_models_omit_attachments_and_enable_web_search() -> None:
     adapter = OpenAIResponsesAdapter(
         endpoint_url=lambda credentials, path: f"https://api.openai.com/v1/{path}",
         request_headers=lambda credentials: {"Authorization": "Bearer test"},
@@ -226,7 +227,7 @@ def test_grok_responses_omits_attachments_and_enables_web_search() -> None:
         model="grok-4.5",
         credentials={},
         prompt_messages=[message],
-        model_parameters={"search_parameters": '{"mode":"on"}'},
+        model_parameters={"enable_web_search": True},
         tools=None,
         stop=None,
         stream=False,
@@ -235,6 +236,65 @@ def test_grok_responses_omits_attachments_and_enables_web_search() -> None:
 
     assert body["input"][0]["content"] == [{"type": "input_text", "text": "search this"}]
     assert body["tools"] == [{"type": "web_search"}]
+
+    gpt_body = adapter._build_body(
+        model="gpt-5.4",
+        credentials={},
+        prompt_messages=[message],
+        model_parameters={"enable_web_search": True},
+        tools=None,
+        stop=None,
+        stream=False,
+        user=None,
+    )
+    assert gpt_body["tools"] == [{"type": "web_search"}]
+
+    disabled_body = adapter._build_body(
+        model="gpt-5.4",
+        credentials={},
+        prompt_messages=[message],
+        model_parameters={"enable_web_search": False},
+        tools=None,
+        stop=None,
+        stream=False,
+        user=None,
+    )
+    assert "tools" not in disabled_body
+
+    unsupported_body = adapter._build_body(
+        model="low",
+        credentials={},
+        prompt_messages=[message],
+        model_parameters={"enable_web_search": True},
+        tools=None,
+        stop=None,
+        stream=False,
+        user=None,
+    )
+    assert "tools" not in unsupported_body
+    assert build_web_search_tool("high", {"enable_web_search": True}) is None
+    assert build_web_search_tool("gpt-5.4", {}) is None
+    assert build_web_search_tool("gpt-5.4", {"enable_web_search": True}) == {"type": "web_search"}
+
+
+def test_generation_parameters_are_normalized_at_the_shared_parameter_boundary() -> None:
+    parameters = {"temperature": 0.2}
+    normalize_generation_parameters("gpt-5.5", parameters)
+    assert parameters["temperature"] == 1
+
+    non_gpt_parameters = {"temperature": 0.2, "top_p": 0.8, "response_format": "json_object"}
+    normalize_generation_parameters("grok-4.5", non_gpt_parameters)
+    assert non_gpt_parameters["temperature"] == 0.2
+    assert non_gpt_parameters["top_p"] == 0.8
+    assert non_gpt_parameters["response_format"] == "json_object"
+
+    invalid_format_parameters = {"response_format": "xml"}
+    normalize_generation_parameters("grok-4.5", invalid_format_parameters)
+    assert "response_format" not in invalid_format_parameters
+
+    token_parameters = {"max_tokens": 8192}
+    normalize_max_tokens(token_parameters, "max_completion_tokens")
+    assert token_parameters == {"max_completion_tokens": 8192}
 
 
 def test_user_text_protocol_reaches_responses_body_as_input_image() -> None:

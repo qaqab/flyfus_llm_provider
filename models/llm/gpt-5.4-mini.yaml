@@ -46,6 +46,12 @@ parameter_rules:
   - medium
   - high
   - xhigh
+- name: enable_web_search
+  label:
+    zh_Hans: 联网搜索
+    en_US: Web search
+  type: boolean
+  default: true
 pricing:
   input: '0.75'
   output: '4.50'
