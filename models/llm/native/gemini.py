@@ -15,6 +15,8 @@ from dify_plugin.entities.model.message import (
 )
 from dify_plugin.errors.model import InvokeError
 
+from models.llm.parameter_conversion import build_gemini_web_search_tool
+
 
 class GeminiNativeDocumentAdapter:
     def __init__(
@@ -84,6 +86,9 @@ class GeminiNativeDocumentAdapter:
             body["generationConfig"] = generation_config
 
         gemini_tools = self._convert_tools(tools or [])
+        web_search_tool = build_gemini_web_search_tool(model, normalized_parameters)
+        if web_search_tool:
+            gemini_tools.append(web_search_tool)
         if gemini_tools:
             body["tools"] = gemini_tools
 
@@ -196,6 +201,7 @@ class GeminiNativeDocumentAdapter:
     def _handle_response(self, model: str, credentials: dict, response: requests.Response) -> LLMResult:
         payload = response.json()
         content = self._extract_text(payload)
+        tool_calls = self._extract_tool_calls(payload)
         usage_payload = payload.get("usageMetadata") or {}
         usage = self._calc_response_usage(
             model,
@@ -203,12 +209,18 @@ class GeminiNativeDocumentAdapter:
             usage_payload.get("promptTokenCount", 0),
             usage_payload.get("candidatesTokenCount", 0),
         )
-        return LLMResult(model=model, message=AssistantPromptMessage(content=content), usage=usage)
+        return LLMResult(
+            model=model,
+            message=AssistantPromptMessage(content=content, tool_calls=tool_calls),
+            usage=usage,
+        )
 
     def _handle_stream(self, model: str, credentials: dict, response: requests.Response) -> Generator:
         chunk_index = 0
         usage_payload: Optional[dict] = None
         finish_reason: Optional[str] = None
+        in_thought = False
+        pending_tool_calls: list[AssistantPromptMessage.ToolCall] = []
 
         for raw_line in response.iter_lines(decode_unicode=False):
             if not raw_line:
@@ -224,7 +236,8 @@ class GeminiNativeDocumentAdapter:
 
             usage_payload = event.get("usageMetadata") or usage_payload
             finish_reason = self._extract_finish_reason(event) or finish_reason
-            delta = self._extract_text(event)
+            delta, in_thought = self._extract_stream_text(event, in_thought)
+            pending_tool_calls.extend(self._extract_tool_calls(event))
             if not delta:
                 continue
             chunk_index += 1
@@ -242,26 +255,72 @@ class GeminiNativeDocumentAdapter:
             (usage_payload or {}).get("promptTokenCount", 0),
             (usage_payload or {}).get("candidatesTokenCount", 0),
         )
+        if in_thought:
+            chunk_index += 1
+            yield LLMResultChunk(
+                model=model,
+                delta=LLMResultChunkDelta(
+                    index=chunk_index,
+                    message=AssistantPromptMessage(content="</think>\n"),
+                ),
+            )
+
         yield LLMResultChunk(
             model=model,
             delta=LLMResultChunkDelta(
                 index=chunk_index + 1,
-                message=AssistantPromptMessage(content=""),
-                finish_reason=finish_reason or "STOP",
+                message=AssistantPromptMessage(content="", tool_calls=pending_tool_calls),
+                finish_reason="tool_calls" if pending_tool_calls else finish_reason or "STOP",
                 usage=usage,
             ),
         )
 
     @staticmethod
     def _extract_text(payload: dict) -> str:
+        text, in_thought = GeminiNativeDocumentAdapter._extract_stream_text(payload, in_thought=False)
+        return text + ("</think>\n" if in_thought else "")
+
+    @staticmethod
+    def _extract_stream_text(payload: dict, in_thought: bool) -> tuple[str, bool]:
+        """将 Gemini ``thought`` part 转为 Dify 可识别的 ``<think>`` 流。"""
         pieces: list[str] = []
         for candidate in payload.get("candidates") or []:
             content = candidate.get("content") or {}
             for part in content.get("parts") or []:
                 text = part.get("text")
-                if text:
-                    pieces.append(str(text))
-        return "".join(pieces)
+                if not text:
+                    continue
+                is_thought = part.get("thought") is True
+                if is_thought and not in_thought:
+                    pieces.append("<think>\n")
+                    in_thought = True
+                elif not is_thought and in_thought:
+                    pieces.append("</think>\n")
+                    in_thought = False
+                pieces.append(str(text))
+        return "".join(pieces), in_thought
+
+    @staticmethod
+    def _extract_tool_calls(payload: dict) -> list[AssistantPromptMessage.ToolCall]:
+        """把 Gemini 原生 ``functionCall`` part 转换为 Dify 工具调用。"""
+        tool_calls: list[AssistantPromptMessage.ToolCall] = []
+        for candidate_index, candidate in enumerate(payload.get("candidates") or []):
+            content = candidate.get("content") or {}
+            for part_index, part in enumerate(content.get("parts") or []):
+                function_call = part.get("functionCall")
+                if not isinstance(function_call, dict) or not function_call.get("name"):
+                    continue
+                tool_calls.append(
+                    AssistantPromptMessage.ToolCall(
+                        id=f"gemini-call-{candidate_index}-{part_index}",
+                        type="function",
+                        function=AssistantPromptMessage.ToolCall.ToolCallFunction(
+                            name=function_call["name"],
+                            arguments=json.dumps(function_call.get("args") or {}, ensure_ascii=False),
+                        ),
+                    )
+                )
+        return tool_calls
 
     @staticmethod
     def _extract_finish_reason(payload: dict) -> Optional[str]:

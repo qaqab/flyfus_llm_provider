@@ -21,6 +21,15 @@ WEB_SEARCH_MODELS = frozenset(
     }
 )
 
+GEMINI_WEB_SEARCH_MODELS = frozenset(
+    {
+        "gemini-3-flash-preview",
+        "gemini-3-pro-preview",
+        "gemini-3.1-pro-preview",
+        "gemini-3.5-flash",
+    }
+)
+
 
 def normalize_generation_parameters(model: str, parameters: dict) -> None:
     """在路由到 Chat Completions 或 Responses API 前规范化通用参数。
@@ -105,3 +114,15 @@ def build_web_search_tool(model: str, parameters: dict) -> Optional[dict]:
     if model.lower() not in WEB_SEARCH_MODELS or parameters.get("enable_web_search") is not True:
         return None
     return {"type": "web_search"}
+
+
+def build_gemini_web_search_tool(model: str, parameters: dict) -> Optional[dict]:
+    """构造 Gemini 原生 ``googleSearch`` 工具。
+
+    Gemini ``generateContent`` 使用 ``tools: [{"googleSearch": {}}]``，与 OpenAI
+    Responses 的 ``{"type": "web_search"}`` 不兼容。只有已验证模型且页面开关为
+    真正的布尔 ``True`` 时才发送，避免关闭开关后仍发生外部搜索。
+    """
+    if model.lower() not in GEMINI_WEB_SEARCH_MODELS or parameters.get("enable_web_search") is not True:
+        return None
+    return {"googleSearch": {}}

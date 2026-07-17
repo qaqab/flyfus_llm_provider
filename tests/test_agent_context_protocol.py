@@ -12,8 +12,14 @@ from dify_plugin.entities.model.message import (
 
 from models.llm.agent_context import inject_context_from_tool_messages
 from models.llm.llm import FlypowerLargeLanguageModel
+from models.llm.native.gemini import GeminiNativeDocumentAdapter
 from models.llm.native.openai_responses import OpenAIResponsesAdapter
-from models.llm.parameter_conversion import build_web_search_tool, normalize_generation_parameters, normalize_max_tokens
+from models.llm.parameter_conversion import (
+    build_gemini_web_search_tool,
+    build_web_search_tool,
+    normalize_generation_parameters,
+    normalize_max_tokens,
+)
 
 
 class FakeResponse:
@@ -501,6 +507,45 @@ def test_reasoning_effort_rejects_invalid_tool_output() -> None:
     ]
 
     assert FlypowerLargeLanguageModel._reasoning_effort_from_tool_messages(prompt_messages) is None
+
+
+def test_gemini_thought_parts_use_dify_think_tags() -> None:
+    payload = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {"thought": True, "text": "reasoning"},
+                        {"text": "answer"},
+                    ]
+                }
+            }
+        ]
+    }
+
+    assert GeminiNativeDocumentAdapter._extract_text(payload) == "<think>\nreasoning</think>\nanswer"
+
+
+def test_gemini_function_calls_are_converted_for_dify() -> None:
+    payload = {
+        "candidates": [
+            {"content": {"parts": [{"functionCall": {"name": "lookup_code", "args": {"id": 7}}}]}}
+        ]
+    }
+
+    tool_calls = GeminiNativeDocumentAdapter._extract_tool_calls(payload)
+
+    assert len(tool_calls) == 1
+    assert tool_calls[0].function.name == "lookup_code"
+    assert tool_calls[0].function.arguments == '{"id": 7}'
+
+
+def test_gemini_web_search_is_explicit_and_model_scoped() -> None:
+    assert build_gemini_web_search_tool("gemini-3-flash-preview", {"enable_web_search": True}) == {
+        "googleSearch": {}
+    }
+    assert build_gemini_web_search_tool("gemini-3-flash-preview", {"enable_web_search": False}) is None
+    assert build_gemini_web_search_tool("gpt-5.5", {"enable_web_search": True}) is None
 
 
 def _context_output(payload: dict) -> dict:

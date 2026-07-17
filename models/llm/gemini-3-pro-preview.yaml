@@ -61,6 +61,16 @@ parameter_rules:
   help:
     zh_Hans: 是否返回思考过程。只有模型支持且开启思考时才会返回。
     en_US: Whether to include thoughts when the model supports and uses thinking.
+- name: enable_web_search
+  label:
+    en_US: Web Search
+    zh_Hans: 联网搜索
+  type: boolean
+  default: true
+  required: false
+  help:
+    zh_Hans: 使用 Gemini 原生 Google Search 联网工具。
+    en_US: Enables the Gemini native Google Search tool.
 pricing:
   input: '0'
   output: '0'
