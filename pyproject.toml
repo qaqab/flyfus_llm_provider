@@ -1,6 +1,6 @@
 [project]
 name = "flyfus-llm-provider"
-version = "0.1.0"
+version = "0.0.1"
 description = "Minimal Dify LLM provider plugin for OpenAI-compatible endpoints."
 readme = "README.md"
 requires-python = ">=3.12"

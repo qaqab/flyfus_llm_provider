@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.1
+
+- Initial Flyfus LLM Provider release.
+- Includes OpenAI-compatible, Responses API, Gemini, usage reporting, invocation logging, and Flyfus URL context support.
+- Published as a new plugin; configure credentials in Dify from scratch.
+
 ## 0.0.36
 
 - 兼容 Dify Workflow 工具的 `tool name -> result -> output` 三层结果包装。
