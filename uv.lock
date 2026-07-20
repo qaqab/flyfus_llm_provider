@@ -280,7 +280,7 @@ wheels = [
 ]
 
 [[package]]
-name = "flypower-llm-provider"
+name = "flyfus-llm-provider"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

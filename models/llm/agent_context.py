@@ -14,7 +14,7 @@ from dify_plugin.entities.model.message import (
     UserPromptMessage,
 )
 
-_CONTEXT_PATTERN = re.compile(r"<FLYPOWER_CONTEXT>(.*?)</FLYPOWER_CONTEXT>", re.DOTALL)
+_CONTEXT_PATTERN = re.compile(r"<FLYFUS_CONTEXT>(.*?)</FLYFUS_CONTEXT>", re.DOTALL)
 _IMAGE_URL_SUFFIXES = (".png", ".jpg", ".jpeg")
 _FILE_URL_SUFFIXES = (".pdf", ".md", ".xlsx", ".csv", ".txt", ".html")
 
@@ -136,8 +136,14 @@ def _normalize_context_payload(payload: object) -> Optional[dict]:
     if not isinstance(payload, dict):
         return None
 
-    if payload.get("type") != "flypower_context":
+    if payload.get("type") != "flyfus_context":
         return None
+
+    if "images" in payload or "files" in payload:
+        return {
+            "images": _context_items(payload, "images"),
+            "files": _context_items(payload, "files"),
+        }
 
     images: list[dict] = []
     files: list[dict] = []
@@ -228,7 +234,7 @@ def _context_instruction(*, image_count: int, file_count: int) -> str:
     if file_count:
         labels.append("file(s)")
     attachment_label = " and ".join(labels) or "context"
-    return f"External context refreshed by Flypower tool output. Use the attached {attachment_label} when answering."
+    return f"External context refreshed by Flyfus tool output. Use the attached {attachment_label} when answering."
 
 
 def _is_public_url(value: str, *, allow_data: bool) -> bool:

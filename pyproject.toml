@@ -1,5 +1,5 @@
 [project]
-name = "flypower-llm-provider"
+name = "flyfus-llm-provider"
 version = "0.1.0"
 description = "Minimal Dify LLM provider plugin for OpenAI-compatible endpoints."
 readme = "README.md"

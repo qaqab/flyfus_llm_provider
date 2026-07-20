@@ -1,13 +1,13 @@
-version: 0.0.43
+version: 0.0.45
 type: plugin
 author: "qaqab"
-name: "flypower_llm_provider"
+name: "flyfus_llm_provider"
 description:
-  en_US: Flypower LLM provider for OpenAI-compatible model endpoints.
-  zh_Hans: Flypower OpenAI 兼容大模型供应商插件。
+  en_US: Flyfus LLM provider for OpenAI-compatible model endpoints.
+  zh_Hans: Flyfus OpenAI 兼容大模型供应商插件。
 label:
-  en_US: "Flypower LLM Provider"
-  zh_Hans: "Flypower 大模型供应商"
+  en_US: "Flyfus LLM Provider"
+  zh_Hans: "Flyfus 大模型供应商"
 created_at: "2026-06-30T00:00:00Z"
 icon: icon.svg
 resource:
@@ -18,9 +18,9 @@ resource:
       llm: true
 plugins:
   models:
-    - "provider/flypower_llm_provider.yaml"
+    - "provider/flyfus_llm_provider.yaml"
 meta:
-  version: 0.0.43
+  version: 0.0.45
   arch:
     - "amd64"
     - "arm64"

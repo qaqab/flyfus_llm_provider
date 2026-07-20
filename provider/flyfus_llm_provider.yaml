@@ -1,8 +1,8 @@
-provider: flypower_llm_provider
+provider: flyfus_llm_provider
 author: qaqab
 label:
-  en_US: Flypower LLM Provider
-  zh_Hans: Flypower 大模型供应商
+  en_US: Flyfus LLM Provider
+  zh_Hans: Flyfus 大模型供应商
 description:
   en_US: OpenAI-compatible LLM provider.
   zh_Hans: OpenAI 兼容大模型供应商。
@@ -86,24 +86,33 @@ provider_credential_schema:
       placeholder:
         en_US: Enter Geo Prompt API Key
         zh_Hans: 输入 Geo Prompt API Key
-    - variable: token_usage_url
+    - variable: geo_env
       label:
-        en_US: Token Usage URL
-        zh_Hans: Token 用量上报地址
+        en_US: Geo Environment
+        zh_Hans: Geo 环境
       type: text-input
-      required: false
+      required: true
       placeholder:
-        en_US: Enter token usage URL
-        zh_Hans: 输入 Token 用量上报地址
-    - variable: token_usage_api_key
+        en_US: dev or prod
+        zh_Hans: dev 或 prod
+    - variable: geo_url
       label:
-        en_US: Token Usage API Key
-        zh_Hans: Token 用量上报 API Key
-      type: secret-input
-      required: false
+        en_US: Geo URL
+        zh_Hans: Geo URL
+      type: text-input
+      required: true
       placeholder:
-        en_US: Enter token usage API Key
-        zh_Hans: 输入 Token 用量上报 API Key
+        en_US: Geo API base URL
+        zh_Hans: Geo API 基础地址
+    - variable: geo_key
+      label:
+        en_US: Geo Key
+        zh_Hans: Geo Key
+      type: secret-input
+      required: true
+      placeholder:
+        en_US: Enter Geo Key
+        zh_Hans: 输入 Geo Key
 models:
   llm:
     predefined:
@@ -111,6 +120,6 @@ models:
     position: "models/llm/_position.yaml"
 extra:
   python:
-    provider_source: provider/flypower_llm_provider.py
+    provider_source: provider/flyfus_llm_provider.py
     model_sources:
       - "models/llm/llm.py"

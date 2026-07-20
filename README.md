@@ -1,6 +1,6 @@
-# Flypower LLM Provider
+# Flyfus LLM Provider
 
-Dify LLM Provider 插件，用于接入 Flypower/OpenAI-compatible 聚合接口。
+Dify LLM Provider 插件，用于接入 Flyfus/OpenAI-compatible 聚合接口。
 
 ## 当前结构
 
@@ -59,10 +59,10 @@ Responses 转换规则：
 
 ## 本地开发
 
-完整规范见 [docs/local_development.md](/Users/walker/code_base/dify_demo/llm_provider_plugins/flypower_llm_provider_plugins/docs/local_development.md)。
+完整规范见 [docs/local_development.md](/Users/walker/code_base/dify_demo/llm_provider_plugins/flyfus_llm_provider/docs/local_development.md)。
 
 ```bash
-cd /Users/walker/code_base/dify_demo/llm_provider_plugins/flypower_llm_provider_plugins
+cd /Users/walker/code_base/dify_demo/llm_provider_plugins/flyfus_llm_provider
 .venv/bin/python -m py_compile models/llm/llm.py models/llm/agent_context.py models/llm/native/openai_responses.py workflow_tools/read_files.py
 .venv/bin/python -m pytest tests/test_agent_context_protocol.py -q
 ```

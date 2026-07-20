@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from typing import Any
 
@@ -8,6 +9,7 @@ from aliyun.log import LogClient, LogItem, PutLogsRequest
 
 
 SLS_LOGSTORE = "flyfus-dify-llm-log"
+logger = logging.getLogger(__name__)
 
 
 def write_invocation_log(credentials: dict[str, Any], event: dict[str, Any]) -> None:
@@ -16,12 +18,16 @@ def write_invocation_log(credentials: dict[str, Any], event: dict[str, Any]) -> 
     access_key_id = str(credentials.get("sls_access_key_id") or "").strip()
     access_key_secret = str(credentials.get("sls_access_key_secret") or "").strip()
     if not endpoint or not project or not access_key_id or not access_key_secret:
+        logger.warning(
+            "Flyfus LLM log skipped: SLS credentials are incomplete",
+            extra={"invocation_id": event.get("invocation_id")},
+        )
         return
 
     contents = [
         ("log_id", str(event.get("invocation_id") or "")),
         ("event", "llm_invocation"),
-        ("source", "flypower_llm_provider"),
+        ("source", "flyfus_llm_provider"),
         ("model", str(event.get("model") or "")),
         ("status", str(event.get("status") or "unknown")),
         ("duration_ms", str(event.get("duration_ms") or 0)),
@@ -32,7 +38,14 @@ def write_invocation_log(credentials: dict[str, Any], event: dict[str, Any]) -> 
         log_item.set_time(int(time.time()))
         log_item.set_contents(contents)
         LogClient(endpoint, access_key_id, access_key_secret).put_logs(
-            PutLogsRequest(project, SLS_LOGSTORE, "flypower-llm-provider", "", [log_item])
+            PutLogsRequest(project, SLS_LOGSTORE, "flyfus-llm-provider", "", [log_item])
         )
-    except Exception:
+    except Exception as error:
+        logger.warning(
+            "Flyfus LLM log delivery failed",
+            extra={
+                "invocation_id": event.get("invocation_id"),
+                "exception_type": type(error).__name__,
+            },
+        )
         return

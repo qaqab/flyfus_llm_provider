@@ -104,7 +104,7 @@ class InvocationLog:
         upstream_request = self.request.get("upstream_request") or {}
         event = {
             "time": _iso_now(),
-            "source": "flypower_llm_provider",
+            "source": "flyfus_llm_provider",
             "schema_version": 3,
             "event_type": "llm_invocation",
             "invocation_id": self.invocation_id,

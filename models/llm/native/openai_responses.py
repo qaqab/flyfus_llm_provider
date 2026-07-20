@@ -26,12 +26,12 @@ from models.llm.parameter_conversion import build_web_search_tool
 
 
 def _debug(message: str, *args: object) -> None:
-    if os.getenv("FLYPOWER_RESPONSES_DEBUG") != "1":
+    if os.getenv("FLYFUS_RESPONSES_DEBUG") != "1":
         return
     if args:
         message = message % args
     with suppress(Exception):
-        with open("/tmp/flypower_responses_debug.log", "a", encoding="utf-8") as debug_file:
+        with open("/tmp/flyfus_responses_debug.log", "a", encoding="utf-8") as debug_file:
             debug_file.write(message + "\n")
 
 
@@ -45,11 +45,19 @@ class OpenAIResponsesAdapter:
         normalize_model_parameters: Callable[[str, dict], dict],
         calc_response_usage: Callable[[str, dict, int, int], object],
         create_final_chunk: Callable[..., LLMResultChunk],
+        build_dify_usage: Optional[Callable[[str, dict, dict], object]] = None,
     ) -> None:
         self._endpoint_url = endpoint_url
         self._request_headers = request_headers
         self._normalize_model_parameters = normalize_model_parameters
-        self._calc_response_usage = calc_response_usage
+        self._build_dify_usage = build_dify_usage or (
+            lambda model, credentials, raw_usage: calc_response_usage(
+                model,
+                credentials,
+                raw_usage.get("input_tokens", 0),
+                raw_usage.get("output_tokens", 0),
+            )
+        )
         self._create_final_chunk = create_final_chunk
 
     def invoke(
@@ -82,11 +90,11 @@ class OpenAIResponsesAdapter:
                 headers=self._request_headers(credentials),
                 json=request_body,
                 stream=stream,
-                timeout=(10, 300),
+                timeout=(10, 120) if stream else (10, 300),
             )
         except Exception as error:
             _debug(
-                "[flypower responses] request_failed model=%s stream=%s error_type=%s error=%s",
+                "[flyfus responses] request_failed model=%s stream=%s error_type=%s error=%s",
                 model,
                 stream,
                 type(error).__name__,
@@ -96,9 +104,12 @@ class OpenAIResponsesAdapter:
 
         request_id = response.headers.get("x-request-id") or response.headers.get("openai-request-id") or ""
         if invocation_log is not None:
-            invocation_log.set_response(http=http_response_summary(response))
+            invocation_log.set_response(
+                http=http_response_summary(response),
+                provider_request_id=request_id or None,
+            )
         _debug(
-            "[flypower responses] response_headers model=%s stream=%s status=%s request_id=%s content_type=%s",
+            "[flyfus responses] response_headers model=%s stream=%s status=%s request_id=%s content_type=%s",
             model,
             stream,
             response.status_code,
@@ -109,7 +120,7 @@ class OpenAIResponsesAdapter:
             if invocation_log is not None:
                 invocation_log.set_response(error_body=response.text[:2000])
             _debug(
-                "[flypower responses] response_error model=%s status=%s body_head=%s",
+                "[flyfus responses] response_error model=%s status=%s body_head=%s",
                 model,
                 response.status_code,
                 response.text[:1000],
@@ -288,7 +299,7 @@ class OpenAIResponsesAdapter:
             data = file_bytes(document_content)
         except Exception as error:
             _debug(
-                "[flypower responses] file_prepare_failed filename=%s mime=%s error_type=%s error=%s",
+                "[flyfus responses] file_prepare_failed filename=%s mime=%s error_type=%s error=%s",
                 filename,
                 mime_type,
                 type(error).__name__,
@@ -297,7 +308,7 @@ class OpenAIResponsesAdapter:
             return None
 
         _debug(
-            "[flypower responses] file_upload_start filename=%s mime=%s bytes=%s",
+            "[flyfus responses] file_upload_start filename=%s mime=%s bytes=%s",
             filename,
             mime_type,
             len(data),
@@ -320,7 +331,7 @@ class OpenAIResponsesAdapter:
             )
         except Exception as error:
             _debug(
-                "[flypower responses] file_upload_failed filename=%s mime=%s bytes=%s error_type=%s error=%s",
+                "[flyfus responses] file_upload_failed filename=%s mime=%s bytes=%s error_type=%s error=%s",
                 filename,
                 mime_type,
                 len(data),
@@ -331,7 +342,7 @@ class OpenAIResponsesAdapter:
 
         if response.status_code >= 400:
             _debug(
-                "[flypower responses] file_upload_http_error filename=%s status=%s body_head=%s",
+                "[flyfus responses] file_upload_http_error filename=%s status=%s body_head=%s",
                 filename,
                 response.status_code,
                 response.text[:500],
@@ -341,13 +352,13 @@ class OpenAIResponsesAdapter:
             file_id = response.json().get("id")
             if isinstance(file_id, str) and file_id:
                 _debug(
-                    "[flypower responses] file_upload_success filename=%s bytes=%s file_id=%s",
+                    "[flyfus responses] file_upload_success filename=%s bytes=%s file_id=%s",
                     filename,
                     len(data),
                     file_id,
                 )
                 return file_id
-        _debug("[flypower responses] file_upload_no_id filename=%s status=%s", filename, response.status_code)
+        _debug("[flyfus responses] file_upload_no_id filename=%s status=%s", filename, response.status_code)
         return None
 
     @staticmethod
@@ -422,7 +433,11 @@ class OpenAIResponsesAdapter:
         usage_payload = payload.get("usage") or {}
         if invocation_log is not None:
             payload_summary = responses_payload_summary(payload)
-            invocation_log.set_response(**payload_summary)
+            invocation_log.set_response(
+                **payload_summary,
+                upstream_usage=usage_payload,
+                provider_request_id=invocation_log.response.get("provider_request_id") or payload.get("id"),
+            )
         return LLMResult(
             model=payload.get("model", model),
             prompt_messages=prompt_messages,
@@ -430,12 +445,7 @@ class OpenAIResponsesAdapter:
                 content=self._extract_output_text(payload),
                 tool_calls=self._extract_tool_calls(payload),
             ),
-            usage=self._calc_response_usage(
-                model,
-                credentials,
-                usage_payload.get("input_tokens", 0),
-                usage_payload.get("output_tokens", 0),
-            ),
+            usage=self._build_dify_usage(model, credentials, usage_payload),
         )
 
     def _handle_stream(
@@ -459,7 +469,7 @@ class OpenAIResponsesAdapter:
         yielded_chunks = 0
         response_id = ""
 
-        _debug("[flypower responses] stream_start model=%s prompt_summary=%s", model, self._prompt_summary(prompt_messages))
+        _debug("[flyfus responses] stream_start model=%s prompt_summary=%s", model, self._prompt_summary(prompt_messages))
 
         try:
             line_iterator = response.iter_lines(decode_unicode=False)
@@ -472,7 +482,7 @@ class OpenAIResponsesAdapter:
                 data = line.removeprefix("data:").strip()
                 if data == "[DONE]":
                     _debug(
-                        "[flypower responses] stream_done_marker model=%s total_events=%s last_event=%s",
+                        "[flyfus responses] stream_done_marker model=%s total_events=%s last_event=%s",
                         model,
                         total_events,
                         last_event_type,
@@ -482,7 +492,7 @@ class OpenAIResponsesAdapter:
                 try:
                     event = json.loads(data)
                 except ValueError:
-                    _debug("[flypower responses] stream_bad_json model=%s line_head=%s", model, data[:500])
+                    _debug("[flyfus responses] stream_bad_json model=%s line_head=%s", model, data[:500])
                     continue
 
                 event_type = event.get("type") or "unknown"
@@ -557,7 +567,7 @@ class OpenAIResponsesAdapter:
                     if event_type == "response.incomplete":
                         incomplete_details = response_payload.get("incomplete_details") or {}
                         _debug(
-                            "[flypower responses] stream_incomplete model=%s details=%s usage=%s",
+                            "[flyfus responses] stream_incomplete model=%s details=%s usage=%s",
                             model,
                             incomplete_details,
                             usage_payload,
@@ -586,11 +596,11 @@ class OpenAIResponsesAdapter:
                             stream_event_counts=event_counts,
                             stream_event_count=total_events,
                         )
-                    _debug("[flypower responses] stream_failed model=%s error=%s", model, error)
+                    _debug("[flyfus responses] stream_failed model=%s error=%s", model, error)
                     raise InvokeError(f"OpenAI Responses 流式请求失败：{error}")
         except requests.exceptions.ChunkedEncodingError as error:
             _debug(
-                "[flypower responses] stream_chunked_encoding_error model=%s error=%s total_events=%s last_event=%s "
+                "[flyfus responses] stream_chunked_encoding_error model=%s error=%s total_events=%s last_event=%s "
                 "event_counts=%s text_chars=%s yielded_chunks=%s saw_completed=%s usage_seen=%s tool_calls=%s",
                 model,
                 error,
@@ -606,7 +616,7 @@ class OpenAIResponsesAdapter:
             raise InvokeError(f"OpenAI Responses 流式连接提前结束：{error}") from error
         except requests.exceptions.RequestException as error:
             _debug(
-                "[flypower responses] stream_request_error model=%s error_type=%s error=%s total_events=%s last_event=%s "
+                "[flyfus responses] stream_request_error model=%s error_type=%s error=%s total_events=%s last_event=%s "
                 "event_counts=%s text_chars=%s yielded_chunks=%s saw_completed=%s",
                 model,
                 type(error).__name__,
@@ -621,7 +631,7 @@ class OpenAIResponsesAdapter:
             raise InvokeError(f"OpenAI Responses 流式请求异常：{error}") from error
 
         _debug(
-            "[flypower responses] stream_end model=%s total_events=%s last_event=%s event_counts=%s text_chars=%s "
+            "[flyfus responses] stream_end model=%s total_events=%s last_event=%s event_counts=%s text_chars=%s "
             "yielded_chunks=%s saw_completed=%s usage_seen=%s tool_calls=%s",
             final_model,
             total_events,
@@ -641,6 +651,8 @@ class OpenAIResponsesAdapter:
                 model=final_model,
                 output_text=full_text,
                 usage=usage_payload,
+                upstream_usage=usage_payload,
+                provider_request_id=invocation_log.response.get("provider_request_id") or response_id,
                 finish_reason=finish_reason,
                 saw_completed=saw_completed,
                 stream_event_counts=event_counts,
@@ -661,7 +673,7 @@ class OpenAIResponsesAdapter:
             )
             index += 1
 
-        yield self._create_final_chunk(
+        final_chunk = self._create_final_chunk(
             index=index,
             message=AssistantPromptMessage(content=""),
             finish_reason=finish_reason,
@@ -671,6 +683,9 @@ class OpenAIResponsesAdapter:
             prompt_messages=prompt_messages,
             full_content=full_text,
         )
+        if final_chunk.delta.usage is not None:
+            final_chunk.delta.usage = self._build_dify_usage(model, credentials, usage_payload or {})
+        yield final_chunk
 
     def _log_request_summary(
         self,
@@ -683,7 +698,7 @@ class OpenAIResponsesAdapter:
     ) -> None:
         input_items = request_body.get("input") or []
         _debug(
-            "[flypower responses] request_summary model=%s stream=%s prompt_summary=%s input_summary=%s "
+            "[flyfus responses] request_summary model=%s stream=%s prompt_summary=%s input_summary=%s "
             "tools=%s text_format=%s body_keys=%s parameter_keys=%s",
             model,
             stream,
@@ -776,7 +791,7 @@ class OpenAIResponsesAdapter:
             if event_number == 1 or event_number % 25 == 0:
                 delta_text = event.get("delta") or event.get("text") or ""
                 _debug(
-                    "[flypower responses] stream_event model=%s n=%s type=%s delta_chars=%s",
+                    "[flyfus responses] stream_event model=%s n=%s type=%s delta_chars=%s",
                     model,
                     event_number,
                     event_type,
@@ -805,7 +820,7 @@ class OpenAIResponsesAdapter:
                 details["error"] = response_payload.get("error")
         if event.get("error"):
             details["error"] = event.get("error")
-        _debug("[flypower responses] stream_event model=%s n=%s type=%s details=%s", model, event_number, event_type, details)
+        _debug("[flyfus responses] stream_event model=%s n=%s type=%s details=%s", model, event_number, event_type, details)
 
     @staticmethod
     def _extract_output_text(payload: dict) -> str:

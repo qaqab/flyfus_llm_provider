@@ -41,18 +41,19 @@ from models.llm.invocation_logging import (
 )
 from models.llm.parameter_conversion import normalize_generation_parameters, normalize_max_tokens
 from models.llm.native.base import model_family
+from models.llm.native.gemini import GeminiNativeDocumentAdapter
 from models.llm.native.openai_responses import OpenAIResponsesAdapter
-from models.llm.usage_reporting import extract_usage_context, report_token_usage
+from models.llm.usage_reporting import format_usage_currency, normalize_upstream_usage, report_token_usage
 
 
 _ACTIVE_INVOCATION_LOG: ContextVar[Optional[InvocationLog]] = ContextVar(
-    "flypower_active_invocation_log",
+    "flyfus_active_invocation_log",
     default=None,
 )
 
 
-class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
-    """Flypower LLM 调用适配器。
+class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
+    """Flyfus LLM 调用适配器。
 
     当前插件主要复用 Dify SDK 的 OpenAI 兼容基类；OpenAI 系列模型单独走
     Responses API，其他模型继续走 Chat Completions 兼容路径。这里保留少量
@@ -71,29 +72,45 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
 
     _THINK_PATTERN = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
     _GEO_PROMPT_REFERENCE_PATTERN = re.compile(
-        r"\{\{geo_prompt:[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+@[A-Za-z0-9_-]+}}"
+        r"\{\{geo_prompt:(?P<name>[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+)(?:@(?P<environment>[A-Za-z0-9_-]+))?}}"
     )
+    _GEO_PROMPT_TOKEN_PATTERN = re.compile(r"\{\{geo_prompt:[^}]*}}")
     _REASONING_EFFORT_TOOL_NAME = "set_next_step"
     _REASONING_EFFORT_VALUES = {"low", "medium", "high", "xhigh"}
 
     @classmethod
     def _render_geo_prompt_text(cls, text: str, credentials: dict) -> str:
         """渲染一段包含 Geo Prompt 引用的文本。"""
-        if not cls._GEO_PROMPT_REFERENCE_PATTERN.search(text):
+        normalized_text = cls._normalize_geo_prompt_references(text, credentials)
+        if normalized_text == text and not cls._GEO_PROMPT_TOKEN_PATTERN.search(text):
             return text
 
+        geo_base_url = str(credentials.get("geo_prompt_render_url") or "").strip().rstrip("/")
+        invocation_log = _ACTIVE_INVOCATION_LOG.get()
+        if invocation_log is not None:
+            invocation_log.event(
+                "geo_prompt_render_request",
+                endpoint=f"{geo_base_url}/dify_prompt/render",
+                reference_count=len(cls._GEO_PROMPT_TOKEN_PATTERN.findall(text)),
+            )
         try:
             response = requests.post(
-                str(credentials.get("geo_prompt_render_url") or "").strip(),
+                f"{geo_base_url}/dify_prompt/render",
                 headers={
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {str(credentials.get('geo_prompt_api_key') or '').strip()}",
                 },
-                json={"text": text},
+                json={"text": normalized_text},
                 timeout=(10, 60),
             )
         except Exception as error:
             raise InvokeError(f"Geo Prompt 渲染请求失败：{error}") from error
+
+        if invocation_log is not None:
+            invocation_log.event(
+                "geo_prompt_render_response",
+                status_code=response.status_code,
+            )
 
         if response.status_code != 200:
             raise InvokeError(
@@ -110,6 +127,28 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
             raise InvokeError("Geo Prompt 渲染接口返回格式缺少 data.rendered_text。")
 
         return rendered_text
+
+    @classmethod
+    def _normalize_geo_prompt_references(cls, text: str, credentials: dict) -> str:
+        geo_prompt_tokens = cls._GEO_PROMPT_TOKEN_PATTERN.findall(text)
+        if not geo_prompt_tokens:
+            return text
+        configured_environment = str(credentials.get("geo_env") or "").strip().lower()
+        for token in geo_prompt_tokens:
+            reference = cls._GEO_PROMPT_REFERENCE_PATTERN.fullmatch(token)
+            if reference is None:
+                raise InvokeError(
+                    "Geo Prompt 引用必须使用 {{geo_prompt:agent.prompt}} 格式。"
+                )
+            if reference.group("environment") and reference.group("environment").lower() != configured_environment:
+                raise InvokeError(
+                    f"Geo Prompt 引用环境 {reference.group('environment')} 与配置的 Geo 环境 "
+                    f"{configured_environment} 不一致。"
+                )
+        return cls._GEO_PROMPT_REFERENCE_PATTERN.sub(
+            lambda reference: f"{{{{geo_prompt:{reference.group('name')}@{configured_environment}}}}}",
+            text,
+        )
 
     def _wrap_thinking_by_reasoning_content(self, delta: dict, is_reasoning: bool) -> tuple[str, bool]:
         """把上游 reasoning 字段转换成 Dify 能识别的思考块。
@@ -166,10 +205,10 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
         headers = {"Content-Type": "application/json"}
         if credentials.get("api_key"):
             headers["Authorization"] = f"Bearer {credentials['api_key']}"
-        invocation_id = credentials.get("_flypower_invocation_id")
+        invocation_id = credentials.get("_flyfus_invocation_id")
         if invocation_id:
             headers["X-Client-Request-Id"] = invocation_id
-            headers["X-Flypower-Invocation-Id"] = invocation_id
+            headers["X-Flyfus-Invocation-Id"] = invocation_id
         return headers
 
     def _endpoint_url(self, credentials: dict, path: str) -> str:
@@ -551,8 +590,32 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
             request_headers=self._request_headers,
             normalize_model_parameters=self._normalize_model_parameters,
             calc_response_usage=self._calc_response_usage,
+            build_dify_usage=self._build_dify_usage,
             create_final_chunk=self._create_final_llm_result_chunk,
         )
+
+    def _gemini_native_adapter(self) -> GeminiNativeDocumentAdapter:
+        """构造 Gemini 原生适配器，避免它退回 OpenAI-compatible 路径。"""
+        return GeminiNativeDocumentAdapter(
+            endpoint_url=self._endpoint_url,
+            normalize_model_parameters=self._normalize_model_parameters,
+            calc_response_usage=self._calc_response_usage,
+            build_dify_usage=self._build_dify_usage,
+        )
+
+    def _build_dify_usage(self, model: str, credentials: dict, raw_usage: dict):
+        """Build Dify's fixed usage object from the upstream usage source of truth."""
+        normalized = normalize_upstream_usage(raw_usage)
+        usage = self._calc_response_usage(
+            model,
+            credentials,
+            normalized["input_tokens"] or 0,
+            normalized["output_tokens"] or 0,
+        )
+        if normalized["total_tokens"] is not None:
+            usage.total_tokens = normalized["total_tokens"]
+        usage.currency = format_usage_currency(raw_usage)
+        return usage
 
     @classmethod
     def _drop_analyze_channel(cls, prompt_messages: list[PromptMessage]) -> None:
@@ -614,20 +677,6 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
             prompt_message.content = cls._render_geo_prompt_text(prompt_message.content, credentials)
 
     @classmethod
-    def _replace_tool_prompt_outputs(cls, prompt_messages: list[PromptMessage], credentials: dict) -> None:
-        """严格替换工具返回的 {"*_tool_prompt": "{{geo_prompt:...}}"}。"""
-        for prompt_message in prompt_messages:
-            if not isinstance(prompt_message, ToolPromptMessage):
-                continue
-            if not isinstance(prompt_message.content, str):
-                continue
-
-            reference_text = cls._extract_exact_tool_prompt_reference(prompt_message.content)
-            if not reference_text:
-                continue
-            prompt_message.content = cls._render_geo_prompt_text(reference_text, credentials)
-
-    @classmethod
     def _reasoning_effort_from_tool_messages(cls, prompt_messages: list[PromptMessage]) -> Optional[str]:
         """Read the next reasoning effort from the dedicated workflow tool only."""
         reasoning_effort = None
@@ -663,35 +712,6 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
             payload = cls._try_parse_json(wrapped_value.strip())
         return None
 
-    @classmethod
-    def _extract_exact_tool_prompt_reference(cls, content: str) -> Optional[str]:
-        payload = cls._try_parse_json(content.strip())
-        if payload is None:
-            return None
-        return cls._extract_exact_tool_prompt_reference_from_payload(payload)
-
-    @classmethod
-    def _extract_exact_tool_prompt_reference_from_payload(
-        cls,
-        payload,
-    ) -> Optional[str]:
-        if not isinstance(payload, dict) or len(payload) != 1:
-            return None
-
-        key, value = next(iter(payload.items()))
-        if isinstance(key, str) and key.endswith("_tool_prompt"):
-            if isinstance(value, str) and cls._GEO_PROMPT_REFERENCE_PATTERN.fullmatch(value.strip()):
-                return value.strip()
-            return None
-
-        if not isinstance(value, str):
-            return None
-
-        parsed_wrapped_value = cls._try_parse_json(value.strip())
-        if parsed_wrapped_value is None:
-            return None
-        return cls._extract_exact_tool_prompt_reference_from_payload(parsed_wrapped_value)
-
     @staticmethod
     def _try_parse_json(text: str):
         if not text or text[0] not in "{[":
@@ -723,16 +743,36 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
             stream=stream,
             user=user,
         )
-        usage_context = extract_usage_context(prompt_messages)
-
         def usage_reporter(usage):
-            return report_token_usage(
-                invocation_log.invocation_id,
-                model,
-                usage,
-                usage_context,
-                credentials,
+            raw_usage = invocation_log.response.get("upstream_usage") or usage
+            provider_request_id = (
+                invocation_log.response.get("provider_request_id")
+                or invocation_log.response.get("response_id")
+                or invocation_log.invocation_id
             )
+            try:
+                reported = report_token_usage(
+                    provider_request_id,
+                    model,
+                    raw_usage,
+                    user,
+                    credentials,
+                )
+            except Exception as error:
+                invocation_log.event(
+                    "token_usage_report",
+                    status="error",
+                    request_id=provider_request_id,
+                    error_type=type(error).__name__,
+                )
+                return False
+            invocation_log.event(
+                "token_usage_report",
+                status="success" if reported else "skipped_or_failed",
+                request_id=provider_request_id,
+                has_usage=raw_usage is not None,
+            )
+            return reported
 
         invocation_log.set_request(
             model=model,
@@ -752,7 +792,7 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
             prompt_metrics=prompt_messages_metrics(prompt_messages),
         )
         normalized_credentials = self._normalize_credentials(model, credentials)
-        normalized_credentials["_flypower_invocation_id"] = invocation_log.invocation_id
+        normalized_credentials["_flyfus_invocation_id"] = invocation_log.invocation_id
         active_log_token = _ACTIVE_INVOCATION_LOG.set(invocation_log)
         family = model_family(model)
         invocation_log.set_request(model_family=family)
@@ -764,8 +804,6 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
                 )
             with invocation_log.step("geo_prompt_render"):
                 self._render_geo_prompt_references(prompt_messages, credentials)
-            with invocation_log.step("tool_prompt_replace"):
-                self._replace_tool_prompt_outputs(prompt_messages, credentials)
             with invocation_log.step("analyze_channel_drop"):
                 with suppress(Exception):
                     self._drop_analyze_channel(prompt_messages)
@@ -773,6 +811,48 @@ class FlypowerLargeLanguageModel(OAICompatLargeLanguageModel):
                 prompt_metrics_final=prompt_messages_metrics(prompt_messages),
                 prompt_messages_final=prompt_messages_summary(prompt_messages),
             )
+
+            if family == "gemini":
+                gemini_adapter = self._gemini_native_adapter()
+                upstream_request_body = gemini_adapter.build_body(
+                    model=model,
+                    prompt_messages=prompt_messages,
+                    model_parameters=dict(effective_model_parameters),
+                    tools=tools,
+                    stop=stop,
+                )
+                invocation_log.set_request(
+                    model_parameters_final=self._normalize_model_parameters(model, dict(effective_model_parameters)),
+                    adapter="gemini_native",
+                    upstream_request={
+                        "endpoint": self._endpoint_url(normalized_credentials, f"models/{model}:generateContent"),
+                        "body_summary": {
+                            "content_count": len(upstream_request_body.get("contents") or []),
+                            "tool_count": len(upstream_request_body.get("tools") or []),
+                            "has_google_search": {"google_search": {}} in (upstream_request_body.get("tools") or []),
+                            "has_generation_config": bool(upstream_request_body.get("generationConfig")),
+                        },
+                    },
+                )
+                with invocation_log.step("upstream_request", adapter="gemini_native"):
+                    result = gemini_adapter.invoke(
+                        model=model,
+                        credentials=normalized_credentials,
+                        prompt_messages=prompt_messages,
+                        model_parameters=effective_model_parameters,
+                        tools=tools,
+                        stop=stop,
+                        stream=stream,
+                        user=user,
+                        invocation_log=invocation_log,
+                    )
+                if stream:
+                    return wrap_stream_with_invocation_log(result, invocation_log, usage_reporter)
+                result_summary = llm_result_summary(result)
+                invocation_log.set_response(**result_summary)
+                invocation_log.success(result_type=type(result).__name__, output_text=result_summary.get("output_text"))
+                usage_reporter(getattr(result, "usage", None))
+                return result
 
             if family == "openai_responses":
                 responses_adapter = self._openai_responses_adapter()

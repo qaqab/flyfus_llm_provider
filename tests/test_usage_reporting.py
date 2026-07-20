@@ -1,13 +1,42 @@
 from types import SimpleNamespace
 
-from dify_plugin.entities.model.message import SystemPromptMessage, TextPromptMessageContent, UserPromptMessage
-
 from models.llm.usage_reporting import (
-    extract_usage_context,
+    format_usage_currency,
     normalize_usage,
+    normalize_upstream_usage,
     post_token_usage,
     report_token_usage,
+    to_geo_payload,
 )
+
+
+def test_normalized_upstream_usage_has_no_transport_fields() -> None:
+    assert normalize_upstream_usage({"input_tokens": 3, "output_tokens": 2}) == {
+        "input_tokens": 3,
+        "cached_tokens": None,
+        "cache_write_tokens": None,
+        "output_tokens": 2,
+        "reasoning_tokens": None,
+        "total_tokens": 5,
+    }
+    assert to_geo_payload("provider-request-1", "gpt-5.5", {"input_tokens": 3, "output_tokens": 2})[
+        "request_id"
+    ] == "provider-request-1"
+
+
+def test_format_usage_currency_contains_complete_token_breakdown() -> None:
+    assert format_usage_currency(
+        {
+            "input_tokens": 1200,
+            "input_tokens_details": {"cached_tokens": 300, "cache_write_tokens": 0},
+            "output_tokens": 450,
+            "output_tokens_details": {"reasoning_tokens": 100},
+            "total_tokens": 1650,
+        }
+    ) == (
+        "输入 Token: 1200；缓存命中 Token: 300；缓存写入 Token: 0；"
+        "输出 Token: 450；推理 Token: 100；总 Token: 1650"
+    )
 
 
 def test_normalize_responses_usage() -> None:
@@ -96,33 +125,29 @@ def test_post_token_usage_uses_dedicated_configuration(monkeypatch) -> None:
     payload = normalize_usage("request-4", "gpt-5.5", {})
 
     credentials = {
-        "token_usage_url": "https://usage.example.com/token-usage",
-        "token_usage_api_key": "usage-key",
+        "geo_url": "https://geo.example.com/api/geo/v2/",
+        "geo_key": "geo-key",
     }
 
     result = post_token_usage(payload, credentials)
 
-    assert result is None
-    assert calls == []
-
-
-def test_extract_usage_context_removes_tag_from_string_and_list_content() -> None:
-    context = '{"usage_owner_type":"report_chat_session","usage_owner_id":"12345"}'
-    messages = [
-        SystemPromptMessage(content=f"system\n<FP_USAGE_CONTEXT>{context}</FP_USAGE_CONTEXT>"),
-        UserPromptMessage(
-            content=[TextPromptMessageContent(data="question <FP_USAGE_CONTEXT>invalid</FP_USAGE_CONTEXT>")]
-        ),
+    assert result is response
+    assert calls == [
+        (
+            ("https://geo.example.com/api/geo/v2/dify_llm/token-usage",),
+            {
+                "headers": {
+                    "Authorization": "Bearer geo-key",
+                    "Content-Type": "application/json",
+                },
+                "json": payload,
+                "timeout": (3, 10),
+            },
+        )
     ]
 
-    result = extract_usage_context(messages)
 
-    assert result == {"usage_owner_type": "report_chat_session", "usage_owner_id": "12345"}
-    assert messages[0].content == "system\n"
-    assert messages[1].content[0].data == "question "
-
-
-def test_report_token_usage_adds_owner_and_keeps_request_id(monkeypatch) -> None:
+def test_report_token_usage_adds_dify_user_and_keeps_request_id(monkeypatch) -> None:
     payloads = []
     monkeypatch.setattr(
         "models.llm.usage_reporting.post_token_usage",
@@ -133,8 +158,8 @@ def test_report_token_usage_adds_owner_and_keeps_request_id(monkeypatch) -> None
         "invocation-123",
         "gpt-5.5",
         {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
-        {"usage_owner_type": "report_chat_session", "usage_owner_id": "42"},
-        {"token_usage_url": "https://usage.example.com/token-usage", "token_usage_api_key": "usage-key"},
+        "100000:report_chat:session_abc",
+        {"geo_url": "https://geo.example.com/api/geo/v2", "geo_key": "geo-key"},
     )
 
     assert reported is True
@@ -149,9 +174,38 @@ def test_report_token_usage_adds_owner_and_keeps_request_id(monkeypatch) -> None
                 "output_tokens": 2,
                 "reasoning_tokens": None,
                 "total_tokens": 12,
-                "usage_owner_type": "report_chat_session",
-                "usage_owner_id": "42",
+                "user": "100000:report_chat:session_abc",
             },
-            {"token_usage_url": "https://usage.example.com/token-usage", "token_usage_api_key": "usage-key"},
+            {"geo_url": "https://geo.example.com/api/geo/v2", "geo_key": "geo-key"},
         )
     ]
+
+
+def test_report_token_usage_skips_missing_dify_user(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "models.llm.usage_reporting.post_token_usage",
+        lambda payload, credentials: (_ for _ in ()).throw(AssertionError("must not post")),
+    )
+
+    assert not report_token_usage(
+        "invocation-123",
+        "gpt-5.5",
+        {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
+        None,
+        {"geo_url": "https://geo.example.com/api/geo/v2", "geo_key": "geo-key"},
+    )
+
+
+def test_report_token_usage_skips_users_outside_the_allowlist(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "models.llm.usage_reporting.post_token_usage",
+        lambda payload, credentials: (_ for _ in ()).throw(AssertionError("must not post")),
+    )
+
+    assert not report_token_usage(
+        "invocation-123",
+        "gpt-5.5",
+        {"input_tokens": 10, "output_tokens": 2, "total_tokens": 12},
+        "100000:workflow:other-session",
+        {"geo_url": "https://geo.example.com/api/geo/v2", "geo_key": "geo-key"},
+    )

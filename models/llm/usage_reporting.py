@@ -1,25 +1,14 @@
-import json
 import re
-from contextlib import suppress
 from typing import Any, Optional
 
 import requests
-from dify_plugin.entities.model.message import TextPromptMessageContent
 
 
-_USAGE_CONTEXT_PATTERN = re.compile(r"<FP_USAGE_CONTEXT>(.*?)</FP_USAGE_CONTEXT>", re.DOTALL)
-_USAGE_OWNER_TYPES = {
-    "dify_run_listing",
-    "dify_run_keyword",
-    "dify_run_category",
-    "dify_run_qa",
-    "chat_session",
-    "report_chat_session",
-}
+_USAGE_USER_PATTERN = re.compile(r"^[^:\s]+:(?:web_chat|report_chat):[^:\s]+$")
 
 
-def normalize_usage(request_id: str, model: str, raw_usage: Optional[dict]) -> dict:
-    """Convert provider-specific token usage into the backend contract."""
+def normalize_upstream_usage(raw_usage: Optional[dict]) -> dict:
+    """Convert provider-specific usage into the shared internal token schema."""
     usage = _as_dict(raw_usage)
     prompt_details = _as_dict(usage.get("prompt_tokens_details"))
     input_details = _as_dict(usage.get("input_tokens_details"))
@@ -33,8 +22,6 @@ def normalize_usage(request_id: str, model: str, raw_usage: Optional[dict]) -> d
         total_tokens = input_tokens + output_tokens
 
     return {
-        "request_id": request_id,
-        "model": model,
         "input_tokens": input_tokens,
         "cached_tokens": _first_not_none(
             input_details.get("cached_tokens"),
@@ -55,6 +42,40 @@ def normalize_usage(request_id: str, model: str, raw_usage: Optional[dict]) -> d
     }
 
 
+def to_geo_payload(request_id: str, model: str, raw_usage: Optional[dict]) -> dict:
+    """Build the Geo token-usage request body from upstream usage."""
+    return {
+        "request_id": request_id,
+        "model": model,
+        **normalize_upstream_usage(raw_usage),
+    }
+
+
+def normalize_usage(request_id: str, model: str, raw_usage: Optional[dict]) -> dict:
+    """Backward-compatible alias for callers that need the Geo request body."""
+    return to_geo_payload(request_id, model, raw_usage)
+
+
+def format_usage_currency(raw_usage: Optional[dict]) -> str:
+    """Render the complete normalized token breakdown into Dify's string-only currency field."""
+    usage = normalize_upstream_usage(raw_usage)
+
+    def value(key: str) -> str:
+        item = usage[key]
+        return str(item) if item is not None else "未提供"
+
+    return "；".join(
+        (
+            f"输入 Token: {value('input_tokens')}",
+            f"缓存命中 Token: {value('cached_tokens')}",
+            f"缓存写入 Token: {value('cache_write_tokens')}",
+            f"输出 Token: {value('output_tokens')}",
+            f"推理 Token: {value('reasoning_tokens')}",
+            f"总 Token: {value('total_tokens')}",
+        )
+    )
+
+
 def post_token_usage(
     payload: dict,
     credentials: dict,
@@ -62,14 +83,11 @@ def post_token_usage(
     timeout: tuple[int, int] = (3, 10),
 ) -> requests.Response:
     """Post normalized token usage to the dedicated backend endpoint."""
-    # Temporary: do not report token usage until the accounting backend is ready.
-    # Remove this return to re-enable token usage uploads.
-    return None
-
+    geo_url = str(credentials.get("geo_url") or "").strip().rstrip("/")
     response = requests.post(
-        str(credentials.get("token_usage_url") or "").strip(),
+        f"{geo_url}/dify_llm/token-usage",
         headers={
-            "Authorization": f"Bearer {str(credentials.get('token_usage_api_key') or '').strip()}",
+            "Authorization": f"Bearer {str(credentials.get('geo_key') or '').strip()}",
             "Content-Type": "application/json",
         },
         json=payload,
@@ -79,71 +97,24 @@ def post_token_usage(
     return response
 
 
-def extract_usage_context(prompt_messages: list) -> Optional[dict[str, str]]:
-    """Remove the private usage tag from prompts and return its last valid payload."""
-    usage_context = None
-    for message in prompt_messages:
-        content = getattr(message, "content", None)
-        if isinstance(content, str):
-            cleaned, contexts = _strip_usage_context(content)
-            message.content = cleaned
-            if contexts:
-                usage_context = contexts[-1]
-            continue
-        if not isinstance(content, list):
-            continue
-        for part in content:
-            if not isinstance(part, TextPromptMessageContent):
-                continue
-            cleaned, contexts = _strip_usage_context(part.data)
-            part.data = cleaned
-            if contexts:
-                usage_context = contexts[-1]
-    return usage_context
-
-
 def report_token_usage(
     request_id: str,
     model: str,
     raw_usage: Optional[dict],
-    usage_context: Optional[dict[str, str]],
+    user: Optional[str],
     credentials: dict,
 ) -> bool:
     """Best-effort usage reporting; accounting failures must not fail the LLM call."""
-    if not usage_context:
+    normalized_user = user.strip() if isinstance(user, str) else ""
+    if not _USAGE_USER_PATTERN.fullmatch(normalized_user):
         return False
-    payload = normalize_usage(request_id, model, raw_usage)
-    payload.update(usage_context)
+    payload = to_geo_payload(request_id, model, raw_usage)
+    payload["user"] = normalized_user
     try:
         post_token_usage(payload, credentials)
     except requests.RequestException:
         return False
     return True
-
-
-def _strip_usage_context(text: str) -> tuple[str, list[dict[str, str]]]:
-    contexts: list[dict[str, str]] = []
-    for match in _USAGE_CONTEXT_PATTERN.finditer(text):
-        with suppress(ValueError):
-            payload = json.loads(match.group(1).strip())
-            if _valid_usage_context(payload):
-                contexts.append(
-                    {
-                        "usage_owner_type": payload["usage_owner_type"],
-                        "usage_owner_id": payload["usage_owner_id"],
-                    }
-                )
-    return _USAGE_CONTEXT_PATTERN.sub("", text), contexts
-
-
-def _valid_usage_context(payload: object) -> bool:
-    if not isinstance(payload, dict):
-        return False
-    return (
-        payload.get("usage_owner_type") in _USAGE_OWNER_TYPES
-        and isinstance(payload.get("usage_owner_id"), str)
-        and bool(payload["usage_owner_id"])
-    )
 
 
 def _first_value(values: dict[str, Any], *keys: str) -> Any:

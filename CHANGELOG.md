@@ -6,7 +6,7 @@
 
 ## 0.0.35
 
-- 修复旧凭据缺少 `mode` 时读取模型 schema 失败，导致 Agent 不能选择 Flypower 模型的问题。
+- 修复旧凭据缺少 `mode` 时读取模型 schema 失败，导致 Agent 不能选择 Flyfus 模型的问题。
 
 ## 0.0.34
 

@@ -2,7 +2,7 @@
 
 Dify 的模型页面希望使用同一套易理解的参数名，但中转站和各上游 API 对参数的
 接受范围并不一致。本模块只处理所有调用路径共享的转换规则；模型特有的思考
-参数转换位于 ``models.llm.llm.FlypowerLargeLanguageModel``，避免在适配器中
+参数转换位于 ``models.llm.llm.FlyfusLargeLanguageModel``，避免在适配器中
 重复同一份分支逻辑。
 """
 

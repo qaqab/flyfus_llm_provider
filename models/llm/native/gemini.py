@@ -15,6 +15,7 @@ from dify_plugin.entities.model.message import (
 )
 from dify_plugin.errors.model import InvokeError
 
+from models.llm.invocation_logging import http_response_summary
 from models.llm.parameter_conversion import build_web_search_tool
 
 
@@ -25,10 +26,18 @@ class GeminiNativeDocumentAdapter:
         endpoint_url: Callable[[dict, str], str],
         normalize_model_parameters: Callable[[str, dict], dict],
         calc_response_usage: Callable[[str, dict, int, int], object],
+        build_dify_usage: Optional[Callable[[str, dict, dict], object]] = None,
     ) -> None:
         self._endpoint_url = endpoint_url
         self._normalize_model_parameters = normalize_model_parameters
-        self._calc_response_usage = calc_response_usage
+        self._build_dify_usage = build_dify_usage or (
+            lambda model, credentials, raw_usage: calc_response_usage(
+                model,
+                credentials,
+                raw_usage.get("input_tokens", 0),
+                raw_usage.get("output_tokens", 0),
+            )
+        )
 
     def invoke(
         self,
@@ -40,6 +49,7 @@ class GeminiNativeDocumentAdapter:
         stop: Optional[list[str]],
         stream: bool,
         user: Optional[str],
+        invocation_log=None,
     ) -> Union[LLMResult, Generator]:
         method = "streamGenerateContent" if stream else "generateContent"
         request_url = self._endpoint_url(credentials, f"models/{model}:{method}")
@@ -55,17 +65,35 @@ class GeminiNativeDocumentAdapter:
                 params=params,
                 json=request_body,
                 stream=stream,
-                timeout=(10, 300),
+                timeout=(10, 120) if stream else (10, 300),
             )
         except Exception as error:
             raise InvokeError(f"Gemini 原生请求失败：{error}") from error
+
+        if invocation_log is not None:
+            invocation_log.set_response(
+                http=http_response_summary(response),
+                provider_request_id=self._provider_request_id(response.headers) or None,
+            )
 
         if response.status_code >= 400:
             raise InvokeError(f"Gemini 原生请求失败，状态码：{response.status_code}，响应：{response.text}")
 
         if stream:
-            return self._handle_stream(model, credentials, response)
-        return self._handle_response(model, credentials, response)
+            return self._handle_stream(model, credentials, response, invocation_log)
+        return self._handle_response(model, credentials, response, invocation_log)
+
+    @staticmethod
+    def _provider_request_id(headers: object) -> str:
+        get = getattr(headers, "get", None)
+        if not callable(get):
+            return ""
+        return (
+            get("x-request-id")
+            or get("x-goog-request-id")
+            or get("x-google-request-id")
+            or ""
+        )
 
     def build_body(
         self,
@@ -199,24 +227,22 @@ class GeminiNativeDocumentAdapter:
             )
         return [{"functionDeclarations": declarations}] if declarations else []
 
-    def _handle_response(self, model: str, credentials: dict, response: requests.Response) -> LLMResult:
+    def _handle_response(self, model: str, credentials: dict, response: requests.Response, invocation_log=None) -> LLMResult:
         payload = response.json()
         content = self._extract_text(payload)
         tool_calls = self._extract_tool_calls(payload)
         usage_payload = payload.get("usageMetadata") or {}
-        usage = self._calc_response_usage(
-            model,
-            credentials,
-            usage_payload.get("promptTokenCount", 0),
-            usage_payload.get("candidatesTokenCount", 0),
-        )
+        raw_usage = self._raw_usage(usage_payload)
+        if invocation_log is not None:
+            invocation_log.set_response(upstream_usage=raw_usage)
+        usage = self._build_dify_usage(model, credentials, raw_usage)
         return LLMResult(
             model=model,
             message=AssistantPromptMessage(content=content, tool_calls=tool_calls),
             usage=usage,
         )
 
-    def _handle_stream(self, model: str, credentials: dict, response: requests.Response) -> Generator:
+    def _handle_stream(self, model: str, credentials: dict, response: requests.Response, invocation_log=None) -> Generator:
         chunk_index = 0
         usage_payload: Optional[dict] = None
         finish_reason: Optional[str] = None
@@ -250,12 +276,10 @@ class GeminiNativeDocumentAdapter:
                 ),
             )
 
-        usage = self._calc_response_usage(
-            model,
-            credentials,
-            (usage_payload or {}).get("promptTokenCount", 0),
-            (usage_payload or {}).get("candidatesTokenCount", 0),
-        )
+        raw_usage = self._raw_usage(usage_payload or {})
+        if invocation_log is not None:
+            invocation_log.set_response(upstream_usage=raw_usage)
+        usage = self._build_dify_usage(model, credentials, raw_usage)
         if in_thought:
             chunk_index += 1
             yield LLMResultChunk(
@@ -275,6 +299,19 @@ class GeminiNativeDocumentAdapter:
                 usage=usage,
             ),
         )
+
+    def _raw_usage(usage_payload: dict) -> dict:
+        return {
+            "input_tokens": usage_payload.get("promptTokenCount", 0),
+            "output_tokens": usage_payload.get("candidatesTokenCount", 0),
+            "total_tokens": usage_payload.get("totalTokenCount"),
+            "prompt_tokens_details": {
+                "cached_tokens": usage_payload.get("cachedContentTokenCount"),
+            },
+            "completion_tokens_details": {
+                "reasoning_tokens": usage_payload.get("thoughtsTokenCount"),
+            },
+        }
 
     @staticmethod
     def _extract_text(payload: dict) -> str:

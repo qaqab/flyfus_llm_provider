@@ -1,17 +1,19 @@
 import json
 
+import pytest
+
 from dify_plugin.entities.model.message import (
     DocumentPromptMessageContent,
     ImagePromptMessageContent,
     PromptMessageContentType,
-    SystemPromptMessage,
     TextPromptMessageContent,
     ToolPromptMessage,
     UserPromptMessage,
 )
+from dify_plugin.errors.model import InvokeError
 
 from models.llm.agent_context import inject_context_from_tool_messages
-from models.llm.llm import FlypowerLargeLanguageModel
+from models.llm.llm import FlyfusLargeLanguageModel
 from models.llm.native.gemini import GeminiNativeDocumentAdapter
 from models.llm.native.openai_responses import OpenAIResponsesAdapter
 from models.llm.parameter_conversion import build_web_search_tool, normalize_generation_parameters, normalize_max_tokens
@@ -30,6 +32,40 @@ class FakeResponse:
 
     def close(self) -> None:
         pass
+
+
+def test_geo_prompt_render_uses_fixed_render_path(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(
+        "models.llm.llm.requests.post",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or FakeResponse(payload={"data": {"rendered_text": "Rendered"}}),
+    )
+
+    rendered = FlyfusLargeLanguageModel._render_geo_prompt_text(
+        "{{geo_prompt:agent.skill}}",
+        {
+            "geo_prompt_render_url": "https://geo.example.com/api/geo/v2/",
+            "geo_prompt_api_key": "prompt-key",
+            "geo_env": "dev",
+        },
+    )
+
+    assert rendered == "Rendered"
+    assert calls[0][0] == ("https://geo.example.com/api/geo/v2/dify_prompt/render",)
+    assert calls[0][1]["headers"]["Authorization"] == "Bearer prompt-key"
+    assert calls[0][1]["json"] == {"text": "{{geo_prompt:agent.skill@dev}}"}
+
+
+@pytest.mark.parametrize(
+    ("reference", "geo_env", "message"),
+    [
+        ("{{geo_prompt:agent.skill@}}", "dev", "必须使用"),
+        ("{{geo_prompt:agent.skill@prod}}", "dev", "不一致"),
+    ],
+)
+def test_geo_prompt_reference_must_match_configured_environment(reference: str, geo_env: str, message: str) -> None:
+    with pytest.raises(InvokeError, match=message):
+        FlyfusLargeLanguageModel._render_geo_prompt_text(reference, {"geo_env": geo_env})
 
 
 def test_context_injection_adds_images_and_files_for_responses() -> None:
@@ -56,12 +92,12 @@ def test_context_injection_adds_images_and_files_for_responses() -> None:
 
 def test_context_injection_handles_dify_json_wrapped_observation() -> None:
     observation = (
-        '{"read_files":"{\\"result\\":\\"<DIFY_CONTEXT>{\\\\\\"version\\\\\\":1,'
-        '\\\\\\"type\\\\\\":\\\\\\"dify_context\\\\\\",\\\\\\"images\\\\\\":[],'
+        '{"read_files":"{\\"result\\":\\"<FLYFUS_CONTEXT>{\\\\\\"version\\\\\\":1,'
+        '\\\\\\"type\\\\\\":\\\\\\"flyfus_context\\\\\\",\\\\\\"images\\\\\\":[],'
         '\\\\\\"files\\\\\\":[{\\\\\\"url\\\\\\":\\\\\\"https://cdn.example.com/report.xlsx\\\\\\",'
         '\\\\\\"filename\\\\\\":\\\\\\"report.xlsx\\\\\\",'
         '\\\\\\"mime_type\\\\\\":\\\\\\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\\\\\\"}]}'
-        '</DIFY_CONTEXT>\\"}"}'
+        '</FLYFUS_CONTEXT>\\"}"}'
     )
     prompt_messages = [ToolPromptMessage(content=observation, tool_call_id="call_1", name="read_files")]
 
@@ -146,8 +182,8 @@ def test_legacy_image_protocol_is_not_injected() -> None:
     prompt_messages = [
         ToolPromptMessage(
             content=(
-                '<DIFY_IMAGE_CONTEXT>{"type":"dify_image_context",'
-                '"images":[{"url":"https://cdn.example.com/a.png"}]}</DIFY_IMAGE_CONTEXT>'
+                '<FLYFUS_CONTEXT>{"type":"dify_image_context",'
+                '"images":[{"url":"https://cdn.example.com/a.png"}]}</FLYFUS_CONTEXT>'
             ),
             tool_call_id="call_1",
             name="read_files",
@@ -306,6 +342,11 @@ def test_gemini_web_search_uses_native_google_search_tool() -> None:
     assert "tools" not in disabled_body
 
 
+def test_gemini_provider_request_id_uses_google_headers() -> None:
+    assert GeminiNativeDocumentAdapter._provider_request_id({"x-goog-request-id": "gemini-request-1"}) == "gemini-request-1"
+    assert GeminiNativeDocumentAdapter._provider_request_id({"x-google-request-id": "gemini-request-2"}) == "gemini-request-2"
+
+
 def test_generation_parameters_are_normalized_at_the_shared_parameter_boundary() -> None:
     parameters = {"temperature": 0.2}
     normalize_generation_parameters("gpt-5.5", parameters)
@@ -338,9 +379,9 @@ def test_user_text_protocol_reaches_responses_body_as_input_image() -> None:
         UserPromptMessage(
             content=(
                 "inspect image "
-                '<DIFY_CONTEXT>{"version":1,"type":"dify_context",'
+                '<FLYFUS_CONTEXT>{"version":1,"type":"flyfus_context",'
                 '"images":[{"url":"data:image/png;base64,AAAA","detail":"high"}],'
-                '"files":[]}</DIFY_CONTEXT>'
+                '"files":[]}</FLYFUS_CONTEXT>'
             )
         )
     ]
@@ -360,7 +401,7 @@ def test_user_text_protocol_reaches_responses_body_as_input_image() -> None:
     assert body["input"][-1]["content"] == [
         {
             "type": "input_text",
-            "text": "External context refreshed by Dify tool output. Use the attached image(s) when answering.",
+            "text": "External context refreshed by Flyfus tool output. Use the attached image(s) when answering.",
         },
         {
             "type": "input_image",
@@ -368,123 +409,6 @@ def test_user_text_protocol_reaches_responses_body_as_input_image() -> None:
             "detail": "high",
         },
     ]
-
-
-def test_tool_prompt_output_is_replaced_when_exact_protocol(monkeypatch) -> None:
-    monkeypatch.setattr(
-        FlypowerLargeLanguageModel,
-        "_render_geo_prompt_text",
-        classmethod(lambda cls, text, credentials: text.replace("{{geo_prompt:flyfus-agent.flyfus-skill-listing-diagnosis@dev}}", "Rendered diagnosis skill")),
-    )
-    prompt_messages = [
-        SystemPromptMessage(content="Base system prompt"),
-        ToolPromptMessage(
-            content='{"listing_diagnosis_tool_prompt":"{{geo_prompt:flyfus-agent.flyfus-skill-listing-diagnosis@dev}}"}',
-            tool_call_id="call_1",
-            name="flyfus_skills",
-        ),
-        ToolPromptMessage(
-            content=json.dumps(
-                {
-                    "flyfus_skills": json.dumps(
-                        {
-                            "listing_diagnosis_tool_prompt": (
-                                "{{geo_prompt:flyfus-agent.flyfus-skill-listing-diagnosis@dev}}"
-                            )
-                        }
-                    )
-                }
-            ),
-            tool_call_id="call_2",
-            name="flyfus_skills",
-        ),
-        ToolPromptMessage(
-            content=json.dumps(
-                {
-                    "flyfus_skills": json.dumps(
-                        {
-                            "listing_optimization_tool_prompt": (
-                                "{{geo_prompt:flyfus-agent.flyfus-skill-listing-diagnosis@dev}}"
-                            )
-                        }
-                    )
-                }
-            ),
-            tool_call_id="call_3",
-            name="flyfus_skills",
-        ),
-    ]
-
-    FlypowerLargeLanguageModel._replace_tool_prompt_outputs(prompt_messages, {})
-
-    assert len(prompt_messages) == 4
-    assert isinstance(prompt_messages[0], SystemPromptMessage)
-    assert prompt_messages[0].content == "Base system prompt"
-    assert prompt_messages[1].content == "Rendered diagnosis skill"
-    assert prompt_messages[2].content == "Rendered diagnosis skill"
-    assert prompt_messages[3].content == "Rendered diagnosis skill"
-
-
-def test_tool_prompt_requires_exact_shape(monkeypatch) -> None:
-    monkeypatch.setattr(
-        FlypowerLargeLanguageModel,
-        "_render_geo_prompt_text",
-        classmethod(lambda cls, text, credentials: "Rendered skill"),
-    )
-    prompt_messages = [
-        SystemPromptMessage(content="Base system prompt"),
-        ToolPromptMessage(
-            content="{{geo_prompt:flyfus-agent.flyfus-skill-listing-diagnosis@dev}}",
-            tool_call_id="call_0",
-            name="flyfus_skills",
-        ),
-        ToolPromptMessage(
-            content='{"skill_prompt":"{{geo_prompt:flyfus-agent.flyfus-skill-listing-diagnosis@dev}}"}',
-            tool_call_id="call_1",
-            name="flyfus_skills",
-        ),
-        ToolPromptMessage(
-            content='{"tool_prompt":"{{geo_prompt:flyfus-agent.flyfus-skill-listing-diagnosis@dev}}","extra":"no"}',
-            tool_call_id="call_2",
-            name="flyfus_skills",
-        ),
-        ToolPromptMessage(
-            content="prefix {{geo_prompt:flyfus-agent.flyfus-skill-listing-diagnosis@dev}}",
-            tool_call_id="call_3",
-            name="flyfus_skills",
-        ),
-        ToolPromptMessage(
-            content="{{geo_prompt:flyfus-agent.flyfus-skill-listing-diagnosis@dev}} suffix",
-            tool_call_id="call_4",
-            name="flyfus_skills",
-        ),
-        ToolPromptMessage(
-            content=json.dumps(
-                {
-                    "flyfus_skills": json.dumps(
-                        {
-                            "listing_diagnosis_tool_prompt": (
-                                "{{geo_prompt:flyfus-agent.flyfus-skill-listing-diagnosis@dev}}"
-                            ),
-                            "extra": "no",
-                        }
-                    )
-                }
-            ),
-            tool_call_id="call_5",
-            name="flyfus_skills",
-        ),
-    ]
-
-    FlypowerLargeLanguageModel._replace_tool_prompt_outputs(prompt_messages, {})
-
-    assert prompt_messages[0].content == "Base system prompt"
-    assert prompt_messages[1].content == "{{geo_prompt:flyfus-agent.flyfus-skill-listing-diagnosis@dev}}"
-    assert prompt_messages[2].content == '{"skill_prompt":"{{geo_prompt:flyfus-agent.flyfus-skill-listing-diagnosis@dev}}"}'
-    assert prompt_messages[3].content == '{"tool_prompt":"{{geo_prompt:flyfus-agent.flyfus-skill-listing-diagnosis@dev}}","extra":"no"}'
-    assert prompt_messages[4].content == "prefix {{geo_prompt:flyfus-agent.flyfus-skill-listing-diagnosis@dev}}"
-    assert prompt_messages[5].content == "{{geo_prompt:flyfus-agent.flyfus-skill-listing-diagnosis@dev}} suffix"
-    assert "extra" in prompt_messages[6].content
 
 
 def test_reasoning_effort_is_read_only_from_set_next_step_tool() -> None:
@@ -501,7 +425,7 @@ def test_reasoning_effort_is_read_only_from_set_next_step_tool() -> None:
         ),
     ]
 
-    effort = FlypowerLargeLanguageModel._reasoning_effort_from_tool_messages(prompt_messages)
+    effort = FlyfusLargeLanguageModel._reasoning_effort_from_tool_messages(prompt_messages)
 
     assert effort == "high"
     assert "next_objective" in prompt_messages[0].content
@@ -517,7 +441,7 @@ def test_reasoning_effort_supports_dify_wrapped_workflow_output() -> None:
         )
     ]
 
-    assert FlypowerLargeLanguageModel._reasoning_effort_from_tool_messages(prompt_messages) == "xhigh"
+    assert FlyfusLargeLanguageModel._reasoning_effort_from_tool_messages(prompt_messages) == "xhigh"
 
 
 def test_reasoning_effort_rejects_invalid_tool_output() -> None:
@@ -529,7 +453,7 @@ def test_reasoning_effort_rejects_invalid_tool_output() -> None:
         )
     ]
 
-    assert FlypowerLargeLanguageModel._reasoning_effort_from_tool_messages(prompt_messages) is None
+    assert FlyfusLargeLanguageModel._reasoning_effort_from_tool_messages(prompt_messages) is None
 
 
 def test_gemini_thought_parts_use_dify_think_tags() -> None:
@@ -566,17 +490,17 @@ def test_gemini_function_calls_are_converted_for_dify() -> None:
 def _context_output(payload: dict) -> dict:
     context = {
         "version": 1,
-        "type": "dify_context",
+        "type": "flyfus_context",
         "images": payload.get("images", []),
         "files": payload.get("files", []),
     }
     return {
-        "output": "<DIFY_CONTEXT>"
+        "output": "<FLYFUS_CONTEXT>"
         + json.dumps(context, ensure_ascii=False, separators=(",", ":"))
-        + "</DIFY_CONTEXT>"
+        + "</FLYFUS_CONTEXT>"
     }
 
 
 def _extract_context_from_output(output: str) -> dict:
-    payload = output.split("<DIFY_CONTEXT>", 1)[1].split("</DIFY_CONTEXT>", 1)[0]
+    payload = output.split("<FLYFUS_CONTEXT>", 1)[1].split("</FLYFUS_CONTEXT>", 1)[0]
     return json.loads(payload)
