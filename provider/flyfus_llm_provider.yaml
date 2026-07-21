@@ -86,15 +86,6 @@ provider_credential_schema:
       placeholder:
         en_US: Enter Geo Prompt API Key
         zh_Hans: 输入 Geo Prompt API Key
-    - variable: geo_env
-      label:
-        en_US: Geo Environment
-        zh_Hans: Geo 环境
-      type: text-input
-      required: true
-      placeholder:
-        en_US: dev or prod
-        zh_Hans: dev 或 prod
     - variable: geo_url
       label:
         en_US: Geo URL

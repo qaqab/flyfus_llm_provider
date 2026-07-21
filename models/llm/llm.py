@@ -72,9 +72,9 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
 
     _THINK_PATTERN = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
     _GEO_PROMPT_REFERENCE_PATTERN = re.compile(
-        r"\{\{geo_prompt:(?P<name>[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+)(?:@(?P<environment>[A-Za-z0-9_-]+))?}}"
+        r"\{\{dify_admin:(?P<name>[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+)}}"
     )
-    _GEO_PROMPT_TOKEN_PATTERN = re.compile(r"\{\{geo_prompt:[^}]*}}")
+    _GEO_PROMPT_TOKEN_PATTERN = re.compile(r"\{\{dify_admin:[^}]*}}")
     _REASONING_EFFORT_TOOL_NAME = "set_next_step"
     _REASONING_EFFORT_VALUES = {"low", "medium", "high", "xhigh"}
 
@@ -90,12 +90,12 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
         if invocation_log is not None:
             invocation_log.event(
                 "geo_prompt_render_request",
-                endpoint=f"{geo_base_url}/dify_prompt/render",
+                endpoint=f"{geo_base_url}/dify_admin/render",
                 reference_count=len(cls._GEO_PROMPT_TOKEN_PATTERN.findall(text)),
             )
         try:
             response = requests.post(
-                f"{geo_base_url}/dify_prompt/render",
+                f"{geo_base_url}/dify_admin/render",
                 headers={
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {str(credentials.get('geo_prompt_api_key') or '').strip()}",
@@ -133,22 +133,13 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
         geo_prompt_tokens = cls._GEO_PROMPT_TOKEN_PATTERN.findall(text)
         if not geo_prompt_tokens:
             return text
-        configured_environment = str(credentials.get("geo_env") or "").strip().lower()
         for token in geo_prompt_tokens:
             reference = cls._GEO_PROMPT_REFERENCE_PATTERN.fullmatch(token)
             if reference is None:
                 raise InvokeError(
-                    "Geo Prompt 引用必须使用 {{geo_prompt:agent.prompt}} 格式。"
+                    "Geo Prompt 引用必须使用 {{dify_admin:agent.prompt}} 格式。"
                 )
-            if reference.group("environment") and reference.group("environment").lower() != configured_environment:
-                raise InvokeError(
-                    f"Geo Prompt 引用环境 {reference.group('environment')} 与配置的 Geo 环境 "
-                    f"{configured_environment} 不一致。"
-                )
-        return cls._GEO_PROMPT_REFERENCE_PATTERN.sub(
-            lambda reference: f"{{{{geo_prompt:{reference.group('name')}@{configured_environment}}}}}",
-            text,
-        )
+        return text
 
     def _wrap_thinking_by_reasoning_content(self, delta: dict, is_reasoning: bool) -> tuple[str, bool]:
         """把上游 reasoning 字段转换成 Dify 能识别的思考块。

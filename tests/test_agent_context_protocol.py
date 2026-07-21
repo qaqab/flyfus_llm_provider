@@ -34,7 +34,7 @@ class FakeResponse:
         pass
 
 
-def test_geo_prompt_render_uses_fixed_render_path(monkeypatch) -> None:
+def test_geo_prompt_render_uses_dify_admin_render_path(monkeypatch) -> None:
     calls = []
     monkeypatch.setattr(
         "models.llm.llm.requests.post",
@@ -42,30 +42,29 @@ def test_geo_prompt_render_uses_fixed_render_path(monkeypatch) -> None:
     )
 
     rendered = FlyfusLargeLanguageModel._render_geo_prompt_text(
-        "{{geo_prompt:agent.skill}}",
+        "{{dify_admin:agent.skill}}",
         {
             "geo_prompt_render_url": "https://geo.example.com/api/geo/v2/",
             "geo_prompt_api_key": "prompt-key",
-            "geo_env": "dev",
         },
     )
 
     assert rendered == "Rendered"
-    assert calls[0][0] == ("https://geo.example.com/api/geo/v2/dify_prompt/render",)
+    assert calls[0][0] == ("https://geo.example.com/api/geo/v2/dify_admin/render",)
     assert calls[0][1]["headers"]["Authorization"] == "Bearer prompt-key"
-    assert calls[0][1]["json"] == {"text": "{{geo_prompt:agent.skill@dev}}"}
+    assert calls[0][1]["json"] == {"text": "{{dify_admin:agent.skill}}"}
 
 
 @pytest.mark.parametrize(
-    ("reference", "geo_env", "message"),
+    ("reference", "message"),
     [
-        ("{{geo_prompt:agent.skill@}}", "dev", "必须使用"),
-        ("{{geo_prompt:agent.skill@prod}}", "dev", "不一致"),
+        ("{{dify_admin:agent.skill@dev}}", "必须使用"),
+        ("{{dify_admin:agent@dev}}", "必须使用"),
     ],
 )
-def test_geo_prompt_reference_must_match_configured_environment(reference: str, geo_env: str, message: str) -> None:
+def test_geo_prompt_reference_must_use_dify_admin_format(reference: str, message: str) -> None:
     with pytest.raises(InvokeError, match=message):
-        FlyfusLargeLanguageModel._render_geo_prompt_text(reference, {"geo_env": geo_env})
+        FlyfusLargeLanguageModel._render_geo_prompt_text(reference, {})
 
 
 def test_context_injection_adds_images_and_files_for_responses() -> None:

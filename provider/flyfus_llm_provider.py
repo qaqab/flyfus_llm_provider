@@ -19,16 +19,12 @@ class FlyfusLLMProvider(ModelProvider):
             "sls_access_key_secret": "请填写 SLS AccessKey Secret",
             "geo_prompt_render_url": "请填写 Geo Prompt 渲染地址",
             "geo_prompt_api_key": "请填写 Geo Prompt API Key",
-            "geo_env": "请填写 Geo 环境",
             "geo_url": "请填写 Geo URL",
             "geo_key": "请填写 Geo Key",
         }
         for name, error_message in required_credentials.items():
             if not str(credentials.get(name) or "").strip():
                 raise CredentialsValidateFailedError(error_message)
-        if str(credentials.get("geo_env") or "").strip().lower() not in {"dev", "prod"}:
-            raise CredentialsValidateFailedError("Geo 环境仅支持 dev 或 prod")
-
         try:
             model_instance = self.get_model_instance(ModelType.LLM)
             model_instance.validate_credentials("gpt-5.4", dict(credentials))
