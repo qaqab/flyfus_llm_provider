@@ -605,7 +605,9 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
         )
         if normalized["total_tokens"] is not None:
             usage.total_tokens = normalized["total_tokens"]
-        usage.currency = format_usage_currency(raw_usage)
+        invocation_log = _ACTIVE_INVOCATION_LOG.get()
+        log_id = invocation_log.invocation_id if invocation_log else credentials.get("_flyfus_invocation_id")
+        usage.currency = format_usage_currency(raw_usage, log_id=str(log_id) if log_id else None)
         return usage
 
     @classmethod

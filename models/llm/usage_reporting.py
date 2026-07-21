@@ -56,7 +56,7 @@ def normalize_usage(request_id: str, model: str, raw_usage: Optional[dict]) -> d
     return to_geo_payload(request_id, model, raw_usage)
 
 
-def format_usage_currency(raw_usage: Optional[dict]) -> str:
+def format_usage_currency(raw_usage: Optional[dict], *, log_id: Optional[str] = None) -> str:
     """Render the complete normalized token breakdown into Dify's string-only currency field."""
     usage = normalize_upstream_usage(raw_usage)
 
@@ -64,7 +64,7 @@ def format_usage_currency(raw_usage: Optional[dict]) -> str:
         item = usage[key]
         return str(item) if item is not None else "未提供"
 
-    return "；".join(
+    summary = "；".join(
         (
             f"输入 Token: {value('input_tokens')}",
             f"缓存命中 Token: {value('cached_tokens')}",
@@ -74,6 +74,7 @@ def format_usage_currency(raw_usage: Optional[dict]) -> str:
             f"总 Token: {value('total_tokens')}",
         )
     )
+    return f"{summary} | log_id={log_id}" if log_id else summary
 
 
 def post_token_usage(

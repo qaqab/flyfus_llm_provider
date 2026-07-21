@@ -39,6 +39,10 @@ def test_format_usage_currency_contains_complete_token_breakdown() -> None:
     )
 
 
+def test_format_usage_currency_appends_the_sls_log_id() -> None:
+    assert format_usage_currency({}, log_id="invocation-123").endswith(" | log_id=invocation-123")
+
+
 def test_normalize_responses_usage() -> None:
     result = normalize_usage(
         "request-1",
