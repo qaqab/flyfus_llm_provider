@@ -1,7 +1,7 @@
 import pytest
 from types import SimpleNamespace
 
-from models.llm.invocation_logging import InvocationLog, wrap_stream_with_invocation_log
+from models.llm.invocation_logging import InvocationLog, failure_output_text, wrap_stream_with_invocation_log
 
 
 def test_invocation_log_uses_provider_credentials(monkeypatch) -> None:
@@ -169,6 +169,53 @@ def test_stream_wrapper_flushes_on_error(monkeypatch) -> None:
     assert invocation_log.result["status"] == "error"
     assert invocation_log.result["error_type"] == "RuntimeError"
     assert flushed == [True]
+
+
+def test_stream_wrapper_returns_normal_error_chunk_when_configured(monkeypatch) -> None:
+    flushed = []
+    invocation_log = InvocationLog.from_credentials(
+        model="gpt-5.6-sol",
+        credentials={},
+        stream=True,
+        user=None,
+    )
+    invocation_log.set_request(prompt_metrics_initial={"message_count": 2, "total_content_chars": 100})
+    monkeypatch.setattr(invocation_log, "flush", lambda: flushed.append(True))
+
+    def broken_stream():
+        raise RuntimeError("Response ended prematurely")
+        yield  # pragma: no cover
+
+    result = list(
+        wrap_stream_with_invocation_log(
+            broken_stream(),
+            invocation_log,
+            error_chunk_factory=lambda content, index: {"content": content, "index": index},
+        )
+    )
+
+    assert result[0]["index"] == 0
+    assert "model: gpt-5.6-sol" in result[0]["content"]
+    assert "input_characters: 100" in result[0]["content"]
+    assert "raw_error: RuntimeError('Response ended prematurely')" in result[0]["content"]
+    assert invocation_log.result["status"] == "error"
+    assert flushed == [True]
+
+
+def test_failure_output_includes_upstream_raw_error() -> None:
+    invocation_log = InvocationLog.from_credentials(model="gpt-5.6-sol", credentials={}, stream=True, user="user-1")
+    invocation_log.set_request(prompt_metrics_initial={"message_count": 3, "total_content_chars": 99})
+    invocation_log.set_response(
+        error={"code": "context_length_exceeded", "type": "invalid_request_error"},
+        http={"headers": {"x-request-id": "request-1"}},
+        stream_event_count=4,
+    )
+
+    content = failure_output_text(invocation_log, RuntimeError("upstream failed"))
+
+    assert "user: user-1" in content
+    assert "upstream_request_id: request-1" in content
+    assert 'raw_error: {"code": "context_length_exceeded", "type": "invalid_request_error"}' in content
 
 
 def test_stream_wrapper_reports_raw_usage_once(monkeypatch) -> None:

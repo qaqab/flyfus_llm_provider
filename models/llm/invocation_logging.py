@@ -167,7 +167,7 @@ class InvocationLog:
         write_invocation_log(self.credentials, event)
 
 
-def wrap_stream_with_invocation_log(stream_result, invocation_log: InvocationLog, usage_reporter=None):
+def wrap_stream_with_invocation_log(stream_result, invocation_log: InvocationLog, usage_reporter=None, error_chunk_factory=None):
     chunk_count = 0
     output_parts: list[str] = []
     usage = None
@@ -190,6 +190,9 @@ def wrap_stream_with_invocation_log(stream_result, invocation_log: InvocationLog
             output_text="".join(output_parts),
         )
         invocation_log.event("stream_error", chunk_count=chunk_count, output_text="".join(output_parts))
+        if error_chunk_factory is not None:
+            yield error_chunk_factory(failure_output_text(invocation_log, error), chunk_count)
+            return
         raise
     else:
         output_text = "".join(output_parts)
@@ -203,6 +206,40 @@ def wrap_stream_with_invocation_log(stream_result, invocation_log: InvocationLog
                 usage_reporter(usage or invocation_log.response.get("usage"))
     finally:
         invocation_log.flush()
+
+
+def failure_output_text(invocation_log: InvocationLog, error: BaseException) -> str:
+    """Build a user-visible failure report without exposing provider credentials."""
+    metrics = invocation_log.request.get("prompt_metrics_final") or invocation_log.request.get("prompt_metrics_initial") or {}
+    response = invocation_log.response
+    upstream_headers = _nested_get(response, "http", "headers") or {}
+    raw_error = response.get("error") or response.get("error_body")
+    if raw_error is None:
+        raw_error = repr(error.__cause__ or error)
+    if isinstance(raw_error, (dict, list)):
+        raw_error = json.dumps(raw_error, ensure_ascii=False, default=str)
+
+    lines = [
+        "[模型调用失败]",
+        "provider: qaqab/flyfus_llm_provider/flyfus_llm_provider",
+        f"model: {invocation_log.model}",
+        f"stream: {str(invocation_log.stream).lower()}",
+        f"user: {invocation_log.user or '<empty>'}",
+        f"input_messages: {metrics.get('message_count', 0)}",
+        f"input_characters: {metrics.get('total_content_chars', 0)}",
+        f"input_roles: {json.dumps(metrics.get('role_counts') or {}, ensure_ascii=False)}",
+        f"invocation_id: {invocation_log.invocation_id}",
+        f"upstream_request_id: {upstream_headers.get('x-request-id') or upstream_headers.get('openai-request-id') or '<none>'}",
+        f"upstream_client_request_id: {upstream_headers.get('x-client-request-id') or '<none>'}",
+        f"upstream_cf_ray: {upstream_headers.get('cf-ray') or '<none>'}",
+        f"stream_event_count: {response.get('stream_event_count', 0)}",
+        f"stream_last_event: {response.get('stream_last_event_type') or '<none>'}",
+        f"partial_output_characters: {len(str(response.get('output_text') or ''))}",
+        f"error_type: {type(error).__name__}",
+        f"error: {error}",
+        f"raw_error: {raw_error}",
+    ]
+    return "\n".join(lines)
 
 
 def llm_result_summary(result: Any) -> dict:
