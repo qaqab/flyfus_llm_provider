@@ -281,7 +281,7 @@ wheels = [
 
 [[package]]
 name = "flyfus-llm-provider"
-version = "0.1.0"
+version = "0.0.1"
 source = { virtual = "." }
 dependencies = [
     { name = "aliyun-log-python-sdk" },
