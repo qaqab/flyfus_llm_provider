@@ -1,3 +1,4 @@
+import hashlib
 import time
 import traceback
 import uuid
@@ -78,6 +79,19 @@ class InvocationLog:
     def set_request(self, **fields: Any) -> None:
         self.request.update(_sanitize(fields))
 
+    def set_replay_request(self, *, endpoint: str, body: dict[str, Any]) -> None:
+        """Store the exact JSON body sent upstream, excluding credentials.
+
+        This intentionally bypasses the diagnostic sanitizer: truncating a prompt,
+        tool argument, or tool output would make the record impossible to replay.
+        Authentication is never part of a replay record and must be supplied by the
+        caller when it is sent again.
+        """
+        self.request["replay_request"] = {
+            "endpoint": endpoint,
+            "body": body,
+        }
+
     def set_response(self, **fields: Any) -> None:
         self.response.update(_sanitize(fields))
 
@@ -105,7 +119,7 @@ class InvocationLog:
         event = {
             "time": _iso_now(),
             "source": "flyfus_llm_provider",
-            "schema_version": 3,
+            "schema_version": 4,
             "event_type": "llm_invocation",
             "invocation_id": self.invocation_id,
             "client_request_id": self.invocation_id,
@@ -146,6 +160,7 @@ class InvocationLog:
                 "endpoint": upstream_request.get("endpoint"),
                 "headers": upstream_request.get("headers"),
                 "body_summary": upstream_request.get("body_summary"),
+                "replay": self.request.get("replay_request"),
                 "http": self.response.get("http"),
                 "stream_event_count": self.response.get("stream_event_count"),
                 "stream_event_counts": self.response.get("stream_event_counts"),
@@ -225,8 +240,8 @@ def failure_output_text(invocation_log: InvocationLog, error: BaseException) -> 
         f"model: {invocation_log.model}",
         f"stream: {str(invocation_log.stream).lower()}",
         f"user: {invocation_log.user or '<empty>'}",
-        f"input_messages: {metrics.get('message_count', 0)}",
-        f"input_characters: {metrics.get('total_content_chars', 0)}",
+        f"input_message_count: {metrics.get('message_count', 0)} messages",
+        f"input_content_characters: {metrics.get('total_content_chars', 0)} Unicode characters (not tokens)",
         f"input_roles: {json.dumps(metrics.get('role_counts') or {}, ensure_ascii=False)}",
         f"invocation_id: {invocation_log.invocation_id}",
         f"upstream_request_id: {upstream_headers.get('x-request-id') or upstream_headers.get('openai-request-id') or '<none>'}",
@@ -367,6 +382,9 @@ def prompt_messages_metrics(prompt_messages: list) -> dict:
             "type_counts": type_counts,
             "total_content_chars": total_chars,
             "latest_user_message": latest_user_message,
+            "latest_user_message_md5": hashlib.md5(latest_user_message.encode("utf-8")).hexdigest()
+            if latest_user_message
+            else "",
             "latest_assistant_message": latest_assistant_message,
             "tool_names": tool_names,
         }

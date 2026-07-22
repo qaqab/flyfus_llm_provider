@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 import re
 from contextvars import ContextVar
 from contextlib import suppress
@@ -18,6 +19,7 @@ from dify_plugin.entities.model.message import (
     ImagePromptMessageContent,
     PromptMessage,
     PromptMessageContentType,
+    PromptMessageFunction,
     PromptMessageRole,
     PromptMessageTool,
     SystemPromptMessage,
@@ -805,7 +807,6 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                 prompt_metrics_final=prompt_messages_metrics(prompt_messages),
                 prompt_messages_final=prompt_messages_summary(prompt_messages),
             )
-
             if family == "gemini":
                 gemini_adapter = self._gemini_native_adapter()
                 upstream_request_body = gemini_adapter.build_body(
@@ -870,7 +871,11 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                     adapter="openai_responses",
                     upstream_request={
                         "endpoint": self._endpoint_url(normalized_credentials, "responses"),
-                        "headers": self._request_headers(normalized_credentials),
+                        "headers": {
+                            key: value
+                            for key, value in self._request_headers(normalized_credentials).items()
+                            if key.lower() != "authorization"
+                        },
                         "body_summary": {
                             "model": upstream_request_body.get("model"),
                             "stream": upstream_request_body.get("stream"),
@@ -914,6 +919,20 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                 self._apply_json_schema_prompt(effective_model_parameters, prompt_messages)
             with invocation_log.step("model_parameters_normalize"):
                 normalized_model_parameters = self._normalize_model_parameters(model, effective_model_parameters)
+            replay_body = self._build_openai_compatible_replay_body(
+                model=model,
+                credentials=normalized_credentials,
+                prompt_messages=prompt_messages,
+                model_parameters=normalized_model_parameters,
+                tools=tools,
+                stop=stop,
+                stream=stream,
+                user=user,
+            )
+            invocation_log.set_replay_request(
+                endpoint=self._endpoint_url(normalized_credentials, "chat/completions"),
+                body=replay_body,
+            )
             invocation_log.set_request(
                 model_parameters_final=normalized_model_parameters,
                 prompt_messages_final=prompt_messages_summary(prompt_messages),
@@ -928,7 +947,11 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                     stream=stream,
                     user=user,
                     convert_message=self._convert_prompt_message_to_dict,
-                    headers=self._request_headers(normalized_credentials),
+                    headers={
+                        key: value
+                        for key, value in self._request_headers(normalized_credentials).items()
+                        if key.lower() != "authorization"
+                    },
                 ),
             )
             with invocation_log.step("upstream_request", adapter="openai_compatible"):
@@ -981,6 +1004,62 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
             )
 
         return create_failure_chunk
+
+    def _build_openai_compatible_replay_body(
+        self,
+        *,
+        model: str,
+        credentials: dict,
+        prompt_messages: list[PromptMessage],
+        model_parameters: dict,
+        tools: Optional[list[PromptMessageTool]],
+        stop: Optional[list[str]],
+        stream: bool,
+        user: Optional[str],
+    ) -> dict:
+        """Mirror Dify's OpenAI-compatible request serialization for replay logs."""
+        parameters = deepcopy(model_parameters)
+        response_format = parameters.get("response_format")
+        if response_format == "json_schema":
+            json_schema = parameters.get("json_schema")
+            if json_schema:
+                parameters.pop("json_schema", None)
+                parameters["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": json.loads(json_schema),
+                }
+        elif response_format:
+            parameters["response_format"] = {"type": response_format}
+        else:
+            parameters.pop("json_schema", None)
+
+        body = {
+            "model": credentials.get("endpoint_model_name", model),
+            "stream": stream,
+            **parameters,
+            "messages": [
+                self._convert_prompt_message_to_dict(message, credentials)
+                for message in prompt_messages
+            ],
+        }
+        if tools:
+            if credentials.get("function_calling_type", "no_call") == "function_call":
+                body["functions"] = [
+                    {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters,
+                    }
+                    for tool in tools
+                ]
+            elif credentials.get("function_calling_type", "no_call") == "tool_call":
+                body["tool_choice"] = "auto"
+                body["tools"] = [PromptMessageFunction(function=tool).model_dump() for tool in tools]
+        if stop:
+            body["stop"] = stop
+        if user:
+            body["user"] = user
+        return body
 
     def _failure_result(
         self,

@@ -54,6 +54,8 @@ class GeminiNativeDocumentAdapter:
         method = "streamGenerateContent" if stream else "generateContent"
         request_url = self._endpoint_url(credentials, f"models/{model}:{method}")
         request_body = self.build_body(model, prompt_messages, model_parameters, tools, stop)
+        if invocation_log is not None:
+            invocation_log.set_replay_request(endpoint=request_url, body=request_body)
         params = {"key": credentials["api_key"]}
         if stream:
             params["alt"] = "sse"

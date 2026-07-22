@@ -1,7 +1,7 @@
 import pytest
 from types import SimpleNamespace
 
-from models.llm.invocation_logging import InvocationLog, failure_output_text, wrap_stream_with_invocation_log
+from models.llm.invocation_logging import InvocationLog, failure_output_text, prompt_messages_metrics, wrap_stream_with_invocation_log
 
 
 def test_invocation_log_uses_provider_credentials(monkeypatch) -> None:
@@ -46,11 +46,32 @@ def test_invocation_log_posts_clean_event(monkeypatch) -> None:
     event = written[0][1]
     assert event["status"] == "success"
     assert "result" not in event
-    assert event["schema_version"] == 3
+    assert event["schema_version"] == 4
     assert event["timeline"][0]["invocation_id"] == event["invocation_id"]
     assert event["timeline"][0]["payload"]["api_key"] == "model-token"
     assert event["timeline"][0]["payload"]["file"] == "data:image/png;base64,AAAA"
     assert "events" not in event
+
+
+def test_invocation_log_keeps_replay_body_without_truncation(monkeypatch) -> None:
+    written = []
+    monkeypatch.setattr(
+        "models.llm.invocation_logging.write_invocation_log",
+        lambda credentials, event: written.append((credentials, event)),
+    )
+
+    invocation_log = InvocationLog.from_credentials(model="gpt-5.6-sol", credentials={}, stream=True, user=None)
+    full_prompt = "x" * 30001
+    invocation_log.set_replay_request(
+        endpoint="https://litellm.flyfus.com/responses",
+        body={"model": "gpt-5.6-sol", "input": [{"role": "user", "content": full_prompt}]},
+    )
+    invocation_log.success()
+    invocation_log.flush()
+
+    replay = written[0][1]["upstream"]["replay"]
+    assert replay["endpoint"] == "https://litellm.flyfus.com/responses"
+    assert replay["body"]["input"][0]["content"] == full_prompt
 
 
 def test_invocation_log_does_not_redact_usage_token_counts(monkeypatch) -> None:
@@ -99,6 +120,15 @@ def test_invocation_log_classifies_system_user_as_single_call(monkeypatch) -> No
 
     event = written[0][1]
     assert event["input"]["kind"] == "single_call"
+
+
+def test_prompt_metrics_adds_md5_for_latest_user_message() -> None:
+    user_message = SimpleNamespace(role=SimpleNamespace(value="user"), content="优化产品主图")
+
+    metrics = prompt_messages_metrics([user_message])
+
+    assert metrics["latest_user_message"] == "优化产品主图"
+    assert metrics["latest_user_message_md5"] == "e20a41c2041abff3d4c1571ca998fe82"
 
 
 def test_invocation_log_keeps_error_details_without_success_result(monkeypatch) -> None:
@@ -196,7 +226,7 @@ def test_stream_wrapper_returns_normal_error_chunk_when_configured(monkeypatch) 
 
     assert result[0]["index"] == 0
     assert "model: gpt-5.6-sol" in result[0]["content"]
-    assert "input_characters: 100" in result[0]["content"]
+    assert "input_content_characters: 100 Unicode characters (not tokens)" in result[0]["content"]
     assert "raw_error: RuntimeError('Response ended prematurely')" in result[0]["content"]
     assert invocation_log.result["status"] == "error"
     assert flushed == [True]

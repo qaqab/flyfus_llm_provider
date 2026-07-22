@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.3
+
+- 调用日志新增可重放的上游请求 Body，覆盖 Responses、Gemini 和 OpenAI-compatible Chat Completions。
+- 重放记录不保存 API Key；使用当前凭据重发即可。
+
 ## 0.0.1
 
 - Initial Flyfus LLM Provider release.

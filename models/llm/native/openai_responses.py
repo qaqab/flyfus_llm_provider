@@ -82,7 +82,13 @@ class OpenAIResponsesAdapter:
             stream=stream,
             user=user,
         )
+        if invocation_log is not None:
+            invocation_log.set_replay_request(
+                endpoint=self._endpoint_url(credentials, "responses"),
+                body=request_body,
+            )
         self._log_request_summary(model, stream, prompt_messages, model_parameters, tools, request_body)
+        self._log_request_body(invocation_log, request_body)
 
         try:
             response = requests.post(
@@ -708,6 +714,23 @@ class OpenAIResponsesAdapter:
             bool((request_body.get("text") or {}).get("format")),
             sorted(request_body.keys()),
             sorted(model_parameters.keys()),
+        )
+
+    @staticmethod
+    def _log_request_body(invocation_log, request_body: dict) -> None:
+        """Write the exact upstream body locally when request debugging is enabled."""
+        if os.getenv("FLYFUS_RESPONSES_DEBUG") != "1":
+            return
+        _debug(
+            "[flyfus responses] request_body %s",
+            json.dumps(
+                {
+                    "invocation_id": getattr(invocation_log, "invocation_id", None),
+                    "body": request_body,
+                },
+                ensure_ascii=False,
+                default=str,
+            ),
         )
 
     @staticmethod
