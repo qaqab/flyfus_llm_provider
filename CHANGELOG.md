@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.15
+
+- Normalize boolean `false` schemas before Gemini function calls.
+
 ## 0.0.14
 
 - Remove `additionalProperties` from Gemini function schemas for compatibility with Gemini 3.1 Pro.

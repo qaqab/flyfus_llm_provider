@@ -318,6 +318,8 @@ class GeminiNativeDocumentAdapter:
         """Normalize Dify JSON Schema features that Gemini function declarations reject."""
         if schema is True:
             return {"type": "object"} if property_name == "params" else {}
+        if schema is False:
+            return {}
         if not isinstance(schema, dict):
             return schema
 
@@ -338,9 +340,17 @@ class GeminiNativeDocumentAdapter:
                 normalized[key] = {
                     name: GeminiNativeDocumentAdapter._normalize_function_schema(item, name)
                     for name, item in value.items()
+                    if item is not False
                 }
                 continue
+            if key == "items" and value is False:
+                normalized["maxItems"] = 0
+                continue
             normalized[key] = GeminiNativeDocumentAdapter._normalize_function_schema(value)
+        if isinstance(normalized.get("properties"), dict) and isinstance(normalized.get("required"), list):
+            normalized["required"] = [
+                name for name in normalized["required"] if name in normalized["properties"]
+            ]
         return normalized
 
     def _handle_response(self, model: str, credentials: dict, response: requests.Response, invocation_log=None) -> LLMResult:

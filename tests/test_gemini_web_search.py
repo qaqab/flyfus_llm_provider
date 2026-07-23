@@ -107,6 +107,39 @@ def test_native_gemini_normalizes_agent_tool_schemas() -> None:
     }
 
 
+def test_native_gemini_normalizes_false_schemas() -> None:
+    body = _adapter().build_body(
+        model="gemini-3.5-flash",
+        prompt_messages=[UserPromptMessage(content="Use the supplied tool")],
+        model_parameters={},
+        tools=[
+            {
+                "function": {
+                    "name": "probe",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "disabled": False,
+                            "values": {"type": "array", "items": False},
+                        },
+                        "required": ["disabled", "values"],
+                    },
+                }
+            }
+        ],
+        stop=None,
+    )
+
+    parameters = body["tools"][0]["functionDeclarations"][0]["parameters"]
+    assert parameters == {
+        "type": "object",
+        "properties": {
+            "values": {"type": "array", "maxItems": 0},
+        },
+        "required": ["values"],
+    }
+
+
 def test_native_gemini_uses_public_url_from_read_file_context() -> None:
     image_url = "https://m.media-amazon.com/images/I/81TZvhKFX9L._AC_SL1500_.jpg"
     prompt_messages = [
