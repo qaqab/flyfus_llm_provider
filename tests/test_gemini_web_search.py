@@ -58,6 +58,56 @@ def test_native_gemini_preserves_server_side_tools_with_function_calls() -> None
     assert body["toolConfig"] == {"includeServerSideToolInvocations": True}
 
 
+def test_native_gemini_normalizes_agent_tool_schemas() -> None:
+    body = _adapter().build_body(
+        model="gemini-3.5-flash",
+        prompt_messages=[UserPromptMessage(content="Retrieve a tool schema")],
+        model_parameters={},
+        tools=[
+            {
+                "function": {
+                    "name": "batch_call",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "tools": {
+                                "type": ["null", "array"],
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "toolName": {"type": "string"},
+                                        "params": True,
+                                    },
+                                    "additionalProperties": False,
+                                },
+                            }
+                        },
+                    },
+                }
+            }
+        ],
+        stop=None,
+    )
+
+    parameters = body["tools"][0]["functionDeclarations"][0]["parameters"]
+    assert parameters == {
+        "type": "object",
+        "properties": {
+            "tools": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "toolName": {"type": "string"},
+                        "params": {"type": "object"},
+                    },
+                    "additionalProperties": False,
+                },
+            }
+        },
+    }
+
+
 def test_native_gemini_uses_public_url_from_read_file_context() -> None:
     image_url = "https://m.media-amazon.com/images/I/81TZvhKFX9L._AC_SL1500_.jpg"
     prompt_messages = [

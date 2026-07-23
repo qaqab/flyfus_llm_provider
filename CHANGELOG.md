@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.0.13
+
+- Remove the unavailable `gemini-3-pro-preview` model from the catalog.
+
+## 0.0.12
+
+- Preserve `additionalProperties` in Gemini function schemas after compatibility testing.
+
+## 0.0.11
+
+- Normalize runtime Agent tool schemas before Gemini native function calls, including nullable array types and boolean parameter schemas.
+
 ## 0.0.3
 
 - 调用日志新增可重放的上游请求 Body，覆盖 Responses、Gemini 和 OpenAI-compatible Chat Completions。

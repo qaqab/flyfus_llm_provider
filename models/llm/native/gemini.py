@@ -306,10 +306,40 @@ class GeminiNativeDocumentAdapter:
                 {
                     "name": name,
                     "description": function.get("description", ""),
-                    "parameters": function.get("parameters", {}),
+                    "parameters": GeminiNativeDocumentAdapter._normalize_function_schema(
+                        function.get("parameters", {})
+                    ),
                 }
             )
         return [{"functionDeclarations": declarations}] if declarations else []
+
+    @staticmethod
+    def _normalize_function_schema(schema: Any, property_name: Optional[str] = None) -> Any:
+        """Normalize Dify JSON Schema features that Gemini function declarations reject."""
+        if schema is True:
+            return {"type": "object"} if property_name == "params" else {}
+        if not isinstance(schema, dict):
+            return schema
+
+        normalized: dict[str, Any] = {}
+        for key, value in schema.items():
+            if key == "description" and value is None:
+                continue
+            if key == "type" and isinstance(value, list):
+                non_null_types = [item for item in value if item != "null"]
+                if len(non_null_types) == 1:
+                    normalized[key] = non_null_types[0]
+                else:
+                    normalized[key] = value
+                continue
+            if key == "properties" and isinstance(value, dict):
+                normalized[key] = {
+                    name: GeminiNativeDocumentAdapter._normalize_function_schema(item, name)
+                    for name, item in value.items()
+                }
+                continue
+            normalized[key] = GeminiNativeDocumentAdapter._normalize_function_schema(value)
+        return normalized
 
     def _handle_response(self, model: str, credentials: dict, response: requests.Response, invocation_log=None) -> LLMResult:
         payload = response.json()
