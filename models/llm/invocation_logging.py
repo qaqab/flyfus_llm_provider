@@ -93,6 +93,9 @@ class InvocationLog:
         }
 
     def set_response(self, **fields: Any) -> None:
+        output_text = fields.get("output_text")
+        if isinstance(output_text, str) and output_text:
+            self.response["output_text_md5"] = hashlib.md5(output_text.encode("utf-8")).hexdigest()
         self.response.update(_sanitize(fields))
 
     def success(self, **fields: Any) -> None:
@@ -116,6 +119,8 @@ class InvocationLog:
         upstream_client_request_id = _nested_get(self.response, "http", "headers", "x-client-request-id")
         upstream_cf_ray = _nested_get(self.response, "http", "headers", "cf-ray")
         upstream_request = self.request.get("upstream_request") or {}
+        output_text = self.response.get("output_text")
+        output_text_md5 = self.response.get("output_text_md5") or ""
         event = {
             "time": _iso_now(),
             "source": "flyfus_llm_provider",
@@ -167,7 +172,8 @@ class InvocationLog:
                 "finish_reason": self.response.get("finish_reason"),
             },
             "output": {
-                "text": self.response.get("output_text"),
+                "text": output_text,
+                "text_md5": output_text_md5,
                 "usage": self.response.get("usage"),
                 "chunk_count": self.response.get("chunk_count") or self.response.get("yielded_chunks"),
                 "tool_calls_count": self.response.get("tool_calls_count"),

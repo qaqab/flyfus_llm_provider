@@ -1,6 +1,7 @@
 import json
 from copy import deepcopy
 import re
+import time
 from contextvars import ContextVar
 from contextlib import suppress
 from functools import lru_cache
@@ -80,6 +81,8 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
     _GEO_PROMPT_TOKEN_PATTERN = re.compile(r"\{\{dify_admin:[^}]*}}")
     _REASONING_EFFORT_TOOL_NAME = "set_next_step"
     _REASONING_EFFORT_VALUES = {"low", "medium", "high", "xhigh"}
+    _GEO_PROMPT_RENDER_ATTEMPTS = 3
+    _GEO_PROMPT_RENDER_RETRY_DELAY_SECONDS = 10
 
     @classmethod
     def _render_geo_prompt_text(cls, text: str, credentials: dict) -> str:
@@ -96,18 +99,45 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                 endpoint=f"{geo_base_url}/dify_admin/render",
                 reference_count=len(cls._GEO_PROMPT_TOKEN_PATTERN.findall(text)),
             )
-        try:
-            response = requests.post(
-                f"{geo_base_url}/dify_admin/render",
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {str(credentials.get('geo_prompt_api_key') or '').strip()}",
-                },
-                json={"text": normalized_text},
-                timeout=(10, 60),
-            )
-        except Exception as error:
-            raise InvokeError(f"Geo Prompt 渲染请求失败：{error}") from error
+        for attempt in range(1, cls._GEO_PROMPT_RENDER_ATTEMPTS + 1):
+            if invocation_log is not None:
+                invocation_log.event(
+                    "geo_prompt_render_attempt_started",
+                    attempt=attempt,
+                    max_attempts=cls._GEO_PROMPT_RENDER_ATTEMPTS,
+                )
+            try:
+                response = requests.post(
+                    f"{geo_base_url}/dify_admin/render",
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {str(credentials.get('geo_prompt_api_key') or '').strip()}",
+                    },
+                    json={"text": normalized_text},
+                    timeout=(10, 60),
+                )
+                break
+            except requests.RequestException as error:
+                if attempt == cls._GEO_PROMPT_RENDER_ATTEMPTS:
+                    if invocation_log is not None:
+                        invocation_log.event(
+                            "geo_prompt_render_failed",
+                            attempt=attempt,
+                            max_attempts=cls._GEO_PROMPT_RENDER_ATTEMPTS,
+                            error_type=type(error).__name__,
+                            error=str(error),
+                        )
+                    raise InvokeError(
+                        f"Geo Prompt 渲染请求失败，已尝试 {attempt} 次：{error}"
+                    ) from error
+                if invocation_log is not None:
+                    invocation_log.event(
+                        "geo_prompt_render_retry",
+                        attempt=attempt,
+                        retry_delay_seconds=cls._GEO_PROMPT_RENDER_RETRY_DELAY_SECONDS,
+                        error=str(error),
+                    )
+                time.sleep(cls._GEO_PROMPT_RENDER_RETRY_DELAY_SECONDS)
 
         if invocation_log is not None:
             invocation_log.event(

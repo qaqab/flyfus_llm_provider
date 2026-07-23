@@ -28,6 +28,7 @@ def write_invocation_log(credentials: dict[str, Any], event: dict[str, Any]) -> 
     contents = [
         ("log_id", str(event.get("invocation_id") or "")),
         ("latest_user_message_md5", str(metrics.get("latest_user_message_md5") or "")),
+        ("output_text_md5", str(((event.get("output") or {}).get("text_md5") or ""))),
         ("event", "llm_invocation"),
         ("source", "flyfus_llm_provider"),
         ("model", str(event.get("model") or "")),
