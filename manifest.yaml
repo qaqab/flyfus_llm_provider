@@ -1,4 +1,4 @@
-version: 0.0.6
+version: 0.0.8
 type: plugin
 author: "qaqab"
 name: "flyfus_llm_provider"
@@ -20,7 +20,7 @@ plugins:
   models:
     - "provider/flyfus_llm_provider.yaml"
 meta:
-  version: 0.0.6
+  version: 0.0.8
   arch:
     - "amd64"
     - "arm64"

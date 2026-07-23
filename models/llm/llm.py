@@ -647,7 +647,10 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                         "body_summary": {
                             "content_count": len(upstream_request_body.get("contents") or []),
                             "tool_count": len(upstream_request_body.get("tools") or []),
-                            "has_google_search": {"google_search": {}} in (upstream_request_body.get("tools") or []),
+                            "has_google_search": {"googleSearch": {}} in (upstream_request_body.get("tools") or []),
+                            "has_server_side_tool_invocations": bool(
+                                (upstream_request_body.get("toolConfig") or {}).get("includeServerSideToolInvocations")
+                            ),
                             "has_generation_config": bool(upstream_request_body.get("generationConfig")),
                         },
                     },
@@ -687,7 +690,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                     tools=tools,
                     stop=stop,
                     stream=stream,
-                    user=user,
+                    user=None,
                 )
                 invocation_log.set_request(
                     model_parameters_final=effective_model_parameters,
@@ -722,7 +725,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                         tools=tools,
                         stop=stop,
                         stream=stream,
-                        user=user,
+                        user=None,
                         invocation_log=invocation_log,
                     )
                 if stream:
@@ -750,7 +753,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                 tools=tools,
                 stop=stop,
                 stream=stream,
-                user=user,
+                user=None,
             )
             invocation_log.set_replay_request(
                 endpoint=self._endpoint_url(normalized_credentials, "chat/completions"),
@@ -768,7 +771,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                     tools=tools,
                     stop=stop,
                     stream=stream,
-                    user=user,
+                    user=None,
                     convert_message=self._convert_prompt_message_to_dict,
                     headers={
                         key: value
@@ -786,7 +789,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                     tools=tools,
                     stop=stop,
                     stream=stream,
-                    user=user,
+                    user=None,
                 )
             if stream:
                 return wrap_stream_with_invocation_log(

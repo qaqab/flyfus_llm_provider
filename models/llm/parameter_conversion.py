@@ -105,8 +105,10 @@ def build_web_search_tool(model: str, parameters: dict) -> Optional[dict]:
     """根据模型协议把统一的联网搜索开关转换为上游工具对象。
 
     页面和 YAML 始终使用 ``enable_web_search``。GPT/Grok 的 Responses 协议转换为
-    ``{"type": "web_search"}``；Gemini 原生 generateContent 协议转换为
-    ``{"google_search": {}}``。两者不能混用：Gemini 收到前者会被上游以 400 拒绝。
+    ``{"type": "web_search"}``；Gemini 的兼容协议转换为
+    ``{"google_search": {}}``。Gemini 原生 generateContent 适配器会将后者转换为
+    REST 所需的 ``{"googleSearch": {}}``。两者不能混用：Gemini 收到前者会被上游以
+    400 拒绝。
 
     两份白名单均经过中转站实测。只有开关是布尔 ``True`` 时才返回工具；``False``、
     缺失、字符串 ``"true"`` 和不支持的模型一律返回 ``None``，避免旧配置或文本值

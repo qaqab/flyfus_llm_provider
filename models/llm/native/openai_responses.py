@@ -158,9 +158,6 @@ class OpenAIResponsesAdapter:
 
         if stop:
             body["stop"] = stop
-        if user:
-            body["user"] = user
-
         for source_name, target_name in {
             "max_tokens": "max_output_tokens",
             "max_completion_tokens": "max_output_tokens",
@@ -198,7 +195,6 @@ class OpenAIResponsesAdapter:
             if isinstance(message, SystemPromptMessage):
                 input_items.append(
                     {
-                        "type": "message",
                         "role": "system",
                         "content": self._text_from_content(message.content),
                     }

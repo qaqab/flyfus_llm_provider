@@ -1,6 +1,7 @@
 import json
 from contextlib import suppress
 from typing import Any, Callable, Generator, Optional, Union
+from urllib.parse import urlparse
 
 import requests
 
@@ -118,8 +119,12 @@ class GeminiNativeDocumentAdapter:
 
         gemini_tools = self._convert_tools(tools or [])
         web_search_tool = build_web_search_tool(model, normalized_parameters)
+        if web_search_tool == {"google_search": {}}:
+            web_search_tool = {"googleSearch": {}}
         if web_search_tool:
             gemini_tools.append(web_search_tool)
+            if tools:
+                body["toolConfig"] = {"includeServerSideToolInvocations": True}
         if gemini_tools:
             body["tools"] = gemini_tools
 
@@ -151,7 +156,7 @@ class GeminiNativeDocumentAdapter:
     def _convert_message_parts(self, prompt_message: PromptMessage) -> list[dict]:
         content = prompt_message.content
         if isinstance(content, str):
-            return [{"text": content}]
+            return [{"text": content}] if content else []
         if not isinstance(content, list):
             return []
 
@@ -159,7 +164,8 @@ class GeminiNativeDocumentAdapter:
         for item in content:
             if item.type == PromptMessageContentType.TEXT:
                 text_content: TextPromptMessageContent = item
-                parts.append({"text": text_content.data})
+                if text_content.data:
+                    parts.append({"text": text_content.data})
             elif item.type in {
                 PromptMessageContentType.IMAGE,
                 PromptMessageContentType.DOCUMENT,
@@ -172,9 +178,32 @@ class GeminiNativeDocumentAdapter:
     @staticmethod
     def _inline_data_part(content: Any) -> dict:
         base64_data = getattr(content, "base64_data", "")
-        if not base64_data:
-            raise InvokeError("Gemini 原生文件路径需要 Dify 提供 base64_data，URL 文件输入暂未实现。")
-        return {"inlineData": {"mimeType": content.mime_type, "data": base64_data}}
+        if base64_data:
+            return {"inlineData": {"mimeType": content.mime_type, "data": base64_data}}
+
+        file_url = GeminiNativeDocumentAdapter._public_file_url(content)
+        if file_url:
+            return {"fileData": {"mimeType": content.mime_type, "fileUri": file_url}}
+
+        raise InvokeError("Gemini 原生文件路径需要 Dify 提供 base64_data 或公开 http/https URL。")
+
+    @staticmethod
+    def _public_file_url(content: Any) -> str:
+        for value in (getattr(content, "url", ""), getattr(content, "data", "")):
+            if not isinstance(value, str):
+                continue
+            parsed = urlparse(value.strip())
+            if parsed.scheme in {"http", "https"} and parsed.hostname not in {
+                None,
+                "localhost",
+                "127.0.0.1",
+                "0.0.0.0",
+                "web",
+                "nginx",
+                "api",
+            }:
+                return value
+        return ""
 
     @staticmethod
     def _generation_config(model_parameters: dict, stop: Optional[list[str]]) -> dict:
