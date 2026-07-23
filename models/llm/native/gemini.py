@@ -1,4 +1,5 @@
 import json
+from base64 import b64encode
 from contextlib import suppress
 from typing import Any, Callable, Generator, Optional, Union
 from urllib.parse import urlparse
@@ -13,12 +14,15 @@ from dify_plugin.entities.model.message import (
     PromptMessageRole,
     PromptMessageTool,
     TextPromptMessageContent,
+    ToolPromptMessage,
 )
 from dify_plugin.errors.model import InvokeError
 
 from models.llm.invocation_logging import http_response_summary
 from models.llm.parameter_conversion import build_web_search_tool
 
+
+DEFAULT_THOUGHT_SIGNATURE = b64encode(b"skip_thought_signature_validator").decode("ascii")
 
 
 class GeminiNativeDocumentAdapter:
@@ -137,9 +141,21 @@ class GeminiNativeDocumentAdapter:
                 continue
             role = "model" if prompt_message.role == PromptMessageRole.ASSISTANT else "user"
             parts = self._convert_message_parts(prompt_message)
+            if isinstance(prompt_message, AssistantPromptMessage):
+                parts = [self._with_thought_signature(part) for part in parts]
+                parts.extend(self._function_call_parts(prompt_message))
+            elif isinstance(prompt_message, ToolPromptMessage):
+                parts = self._function_response_parts(prompt_message)
             if parts:
-                contents.append({"role": role, "parts": parts})
+                if contents and contents[-1]["role"] == role:
+                    contents[-1]["parts"].extend(parts)
+                else:
+                    contents.append({"role": role, "parts": parts})
         return contents
+
+    @staticmethod
+    def _with_thought_signature(part: dict) -> dict:
+        return {**part, "thoughtSignature": DEFAULT_THOUGHT_SIGNATURE}
 
     @staticmethod
     def _system_instruction(prompt_messages: list[PromptMessage]) -> Optional[dict]:
@@ -174,6 +190,43 @@ class GeminiNativeDocumentAdapter:
             }:
                 parts.append(self._inline_data_part(item))
         return parts
+
+    @staticmethod
+    def _function_call_parts(message: AssistantPromptMessage) -> list[dict]:
+        parts: list[dict] = []
+        for tool_call in message.tool_calls:
+            try:
+                args = json.loads(tool_call.function.arguments)
+            except (TypeError, ValueError):
+                raise InvokeError(f"Gemini 原生 functionCall 参数不是有效 JSON：{tool_call.function.name}") from None
+            if not isinstance(args, dict):
+                raise InvokeError(f"Gemini 原生 functionCall 参数必须是 JSON 对象：{tool_call.function.name}")
+            parts.append(
+                {
+                    "functionCall": {
+                        "name": tool_call.function.name,
+                        "args": args,
+                        "id": tool_call.id,
+                    },
+                    "thoughtSignature": DEFAULT_THOUGHT_SIGNATURE,
+                }
+            )
+        return parts
+
+    @staticmethod
+    def _function_response_parts(message: ToolPromptMessage) -> list[dict]:
+        if not message.name:
+            return []
+
+        return [
+            {
+                "functionResponse": {
+                    "name": message.name,
+                    "response": {"response": message.content},
+                    "id": message.tool_call_id,
+                }
+            }
+        ]
 
     @staticmethod
     def _inline_data_part(content: Any) -> dict:
@@ -382,7 +435,7 @@ class GeminiNativeDocumentAdapter:
                     continue
                 tool_calls.append(
                     AssistantPromptMessage.ToolCall(
-                        id=f"gemini-call-{candidate_index}-{part_index}",
+                        id=function_call.get("id") or f"gemini-call-{candidate_index}-{part_index}",
                         type="function",
                         function=AssistantPromptMessage.ToolCall.ToolCallFunction(
                             name=function_call["name"],

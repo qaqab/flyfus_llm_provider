@@ -1,6 +1,9 @@
-from models.llm.native.gemini import GeminiNativeDocumentAdapter
+import pytest
+
+from models.llm.native.gemini import DEFAULT_THOUGHT_SIGNATURE, GeminiNativeDocumentAdapter
 from models.llm.agent_context import inject_context_from_tool_messages
 from dify_plugin.entities.model.message import AssistantPromptMessage, ToolPromptMessage, UserPromptMessage
+from dify_plugin.errors.model import InvokeError
 
 
 def _adapter() -> GeminiNativeDocumentAdapter:
@@ -97,6 +100,147 @@ def test_native_gemini_omits_empty_history_messages() -> None:
     )
 
     assert body["contents"] == [
-        {"role": "user", "parts": [{"text": "First question"}]},
-        {"role": "user", "parts": [{"text": "Second question"}]},
+        {
+            "role": "user",
+            "parts": [{"text": "First question"}, {"text": "Second question"}],
+        },
     ]
+
+
+def test_native_gemini_round_trips_function_calls_and_responses() -> None:
+    tool_call = AssistantPromptMessage.ToolCall(
+        id="gemini-time-1",
+        type="function",
+        function=AssistantPromptMessage.ToolCall.ToolCallFunction(
+            name="current_time",
+            arguments='{"reason":"answer the date"}',
+        ),
+    )
+    body = _adapter().build_body(
+        model="gemini-3.5-flash",
+        prompt_messages=[
+            UserPromptMessage(content="What date is it?"),
+            AssistantPromptMessage(content="", tool_calls=[tool_call]),
+            ToolPromptMessage(
+                name="current_time",
+                tool_call_id="gemini-time-1",
+                content='{"current_time":"2026-07-23 08:00:00"}',
+            ),
+        ],
+        model_parameters={},
+        tools=None,
+        stop=None,
+    )
+
+    assert body["contents"] == [
+        {"role": "user", "parts": [{"text": "What date is it?"}]},
+        {
+            "role": "model",
+            "parts": [
+                {
+                    "functionCall": {
+                        "name": "current_time",
+                        "args": {"reason": "answer the date"},
+                        "id": "gemini-time-1",
+                    },
+                    "thoughtSignature": DEFAULT_THOUGHT_SIGNATURE,
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "parts": [
+                {
+                    "functionResponse": {
+                        "name": "current_time",
+                        "response": {"response": '{"current_time":"2026-07-23 08:00:00"}'},
+                        "id": "gemini-time-1",
+                    }
+                }
+            ],
+        },
+    ]
+
+
+def test_native_gemini_preserves_upstream_function_call_id() -> None:
+    tool_calls = _adapter()._extract_tool_calls(
+        {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "functionCall": {
+                                    "id": "gemini-time-1",
+                                    "name": "current_time",
+                                    "args": {},
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    )
+
+    assert tool_calls[0].id == "gemini-time-1"
+
+
+def test_native_gemini_merges_consecutive_tool_responses() -> None:
+    body = _adapter().build_body(
+        model="gemini-3.5-flash",
+        prompt_messages=[
+            UserPromptMessage(content="Use both tools"),
+            AssistantPromptMessage(
+                content="",
+                tool_calls=[
+                    AssistantPromptMessage.ToolCall(
+                        id="call-1",
+                        type="function",
+                        function=AssistantPromptMessage.ToolCall.ToolCallFunction(
+                            name="first_tool", arguments="{}"
+                        ),
+                    ),
+                    AssistantPromptMessage.ToolCall(
+                        id="call-2",
+                        type="function",
+                        function=AssistantPromptMessage.ToolCall.ToolCallFunction(
+                            name="second_tool", arguments="{}"
+                        ),
+                    ),
+                ],
+            ),
+            ToolPromptMessage(name="first_tool", tool_call_id="call-1", content="first"),
+            ToolPromptMessage(name="second_tool", tool_call_id="call-2", content="second"),
+        ],
+        model_parameters={},
+        tools=None,
+        stop=None,
+    )
+
+    assert len(body["contents"]) == 3
+    assert len(body["contents"][-1]["parts"]) == 2
+
+
+def test_native_gemini_rejects_invalid_historical_function_arguments() -> None:
+    message = AssistantPromptMessage(
+        content="",
+        tool_calls=[
+            AssistantPromptMessage.ToolCall(
+                id="call-1",
+                type="function",
+                function=AssistantPromptMessage.ToolCall.ToolCallFunction(
+                    name="current_time", arguments="not-json"
+                ),
+            )
+        ],
+    )
+
+    with pytest.raises(InvokeError, match="有效 JSON"):
+        _adapter().build_body(
+            model="gemini-3.5-flash",
+            prompt_messages=[message],
+            model_parameters={},
+            tools=None,
+            stop=None,
+        )
