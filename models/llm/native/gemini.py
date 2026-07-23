@@ -323,6 +323,8 @@ class GeminiNativeDocumentAdapter:
 
         normalized: dict[str, Any] = {}
         for key, value in schema.items():
+            if key == "additionalProperties":
+                continue
             if key == "description" and value is None:
                 continue
             if key == "type" and isinstance(value, list):

@@ -101,7 +101,6 @@ def test_native_gemini_normalizes_agent_tool_schemas() -> None:
                         "toolName": {"type": "string"},
                         "params": {"type": "object"},
                     },
-                    "additionalProperties": False,
                 },
             }
         },

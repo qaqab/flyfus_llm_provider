@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.14
+
+- Remove `additionalProperties` from Gemini function schemas for compatibility with Gemini 3.1 Pro.
+
 ## 0.0.13
 
 - Remove the unavailable `gemini-3-pro-preview` model from the catalog.
