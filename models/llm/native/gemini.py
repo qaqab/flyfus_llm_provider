@@ -302,6 +302,7 @@ class GeminiNativeDocumentAdapter:
             ),
         )
 
+    @staticmethod
     def _raw_usage(usage_payload: dict) -> dict:
         return {
             "input_tokens": usage_payload.get("promptTokenCount", 0),

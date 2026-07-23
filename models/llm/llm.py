@@ -1,16 +1,12 @@
 import json
 from copy import deepcopy
 import re
-import time
 from contextvars import ContextVar
 from contextlib import suppress
-from functools import lru_cache
-from pathlib import Path
 from typing import Generator, Optional, Union
 from urllib.parse import urljoin
 
 import requests
-import yaml
 
 from dify_plugin.entities.model.llm import LLMMode, LLMResult, LLMResultChunk, LLMResultChunkDelta
 from dify_plugin.entities.model.message import (
@@ -21,10 +17,7 @@ from dify_plugin.entities.model.message import (
     PromptMessage,
     PromptMessageContentType,
     PromptMessageFunction,
-    PromptMessageRole,
     PromptMessageTool,
-    SystemPromptMessage,
-    ToolPromptMessage,
     UserPromptMessage,
     VideoPromptMessageContent,
 )
@@ -32,6 +25,7 @@ from dify_plugin.errors.model import CredentialsValidateFailedError, InvokeError
 from dify_plugin.interfaces.model.openai_compatible.llm import OAICompatLargeLanguageModel
 
 from models.llm.agent_context import inject_context_from_tool_messages
+from models.llm.geo_prompt import render_geo_prompt_references
 from models.llm.invocation_logging import (
     http_response_summary,
     InvocationLog,
@@ -43,10 +37,13 @@ from models.llm.invocation_logging import (
     upstream_openai_compatible_request_summary,
     wrap_stream_with_invocation_log,
 )
+from models.llm.model_catalog import load_model_extra, load_predefined_chat_models
 from models.llm.parameter_conversion import normalize_generation_parameters, normalize_max_tokens
 from models.llm.native.base import model_family
 from models.llm.native.gemini import GeminiNativeDocumentAdapter
 from models.llm.native.openai_responses import OpenAIResponsesAdapter
+from models.llm.prompt_preprocessing import apply_json_schema_prompt, drop_analyze_channel
+from models.llm.reasoning_effort import reasoning_effort_from_tool_messages
 from models.llm.usage_reporting import format_usage_currency, normalize_upstream_usage, report_token_usage
 
 
@@ -73,106 +70,6 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
 
     Gemini 和其他国产/兼容模型暂不走文件特殊路径，后续可按模型族单独拆分。
     """
-
-    _THINK_PATTERN = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
-    _GEO_PROMPT_REFERENCE_PATTERN = re.compile(
-        r"\{\{dify_admin:(?P<name>[A-Za-z0-9_-]+\.[A-Za-z0-9_.-]+)}}"
-    )
-    _GEO_PROMPT_TOKEN_PATTERN = re.compile(r"\{\{dify_admin:[^}]*}}")
-    _REASONING_EFFORT_TOOL_NAME = "set_next_step"
-    _REASONING_EFFORT_VALUES = {"low", "medium", "high", "xhigh"}
-    _GEO_PROMPT_RENDER_ATTEMPTS = 3
-    _GEO_PROMPT_RENDER_RETRY_DELAY_SECONDS = 10
-
-    @classmethod
-    def _render_geo_prompt_text(cls, text: str, credentials: dict) -> str:
-        """渲染一段包含 Geo Prompt 引用的文本。"""
-        normalized_text = cls._normalize_geo_prompt_references(text, credentials)
-        if normalized_text == text and not cls._GEO_PROMPT_TOKEN_PATTERN.search(text):
-            return text
-
-        geo_base_url = str(credentials.get("geo_prompt_render_url") or "").strip().rstrip("/")
-        invocation_log = _ACTIVE_INVOCATION_LOG.get()
-        if invocation_log is not None:
-            invocation_log.event(
-                "geo_prompt_render_request",
-                endpoint=f"{geo_base_url}/dify_admin/render",
-                reference_count=len(cls._GEO_PROMPT_TOKEN_PATTERN.findall(text)),
-            )
-        for attempt in range(1, cls._GEO_PROMPT_RENDER_ATTEMPTS + 1):
-            if invocation_log is not None:
-                invocation_log.event(
-                    "geo_prompt_render_attempt_started",
-                    attempt=attempt,
-                    max_attempts=cls._GEO_PROMPT_RENDER_ATTEMPTS,
-                )
-            try:
-                response = requests.post(
-                    f"{geo_base_url}/dify_admin/render",
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {str(credentials.get('geo_prompt_api_key') or '').strip()}",
-                    },
-                    json={"text": normalized_text},
-                    timeout=(10, 60),
-                )
-                break
-            except requests.RequestException as error:
-                if attempt == cls._GEO_PROMPT_RENDER_ATTEMPTS:
-                    if invocation_log is not None:
-                        invocation_log.event(
-                            "geo_prompt_render_failed",
-                            attempt=attempt,
-                            max_attempts=cls._GEO_PROMPT_RENDER_ATTEMPTS,
-                            error_type=type(error).__name__,
-                            error=str(error),
-                        )
-                    raise InvokeError(
-                        f"Geo Prompt 渲染请求失败，已尝试 {attempt} 次：{error}"
-                    ) from error
-                if invocation_log is not None:
-                    invocation_log.event(
-                        "geo_prompt_render_retry",
-                        attempt=attempt,
-                        retry_delay_seconds=cls._GEO_PROMPT_RENDER_RETRY_DELAY_SECONDS,
-                        error=str(error),
-                    )
-                time.sleep(cls._GEO_PROMPT_RENDER_RETRY_DELAY_SECONDS)
-
-        if invocation_log is not None:
-            invocation_log.event(
-                "geo_prompt_render_response",
-                status_code=response.status_code,
-            )
-
-        if response.status_code != 200:
-            raise InvokeError(
-                f"Geo Prompt 渲染失败，状态码：{response.status_code}，响应：{response.text}"
-            )
-
-        try:
-            payload = response.json()
-        except ValueError as error:
-            raise InvokeError("Geo Prompt 渲染接口返回的不是 JSON。") from error
-
-        rendered_text = payload.get("data", {}).get("rendered_text")
-        if not isinstance(rendered_text, str):
-            raise InvokeError("Geo Prompt 渲染接口返回格式缺少 data.rendered_text。")
-
-        return rendered_text
-
-    @classmethod
-    def _normalize_geo_prompt_references(cls, text: str, credentials: dict) -> str:
-        geo_prompt_tokens = cls._GEO_PROMPT_TOKEN_PATTERN.findall(text)
-        if not geo_prompt_tokens:
-            return text
-        for token in geo_prompt_tokens:
-            reference = cls._GEO_PROMPT_REFERENCE_PATTERN.fullmatch(token)
-            if reference is None:
-                raise InvokeError(
-                    "Geo Prompt 引用必须使用 {{dify_admin:agent.prompt}} 格式。"
-                )
-        return text
 
     def _wrap_thinking_by_reasoning_content(self, delta: dict, is_reasoning: bool) -> tuple[str, bool]:
         """把上游 reasoning 字段转换成 Dify 能识别的思考块。
@@ -300,7 +197,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
         ``max_tokens``。回退策略是为了让新模型在未添加额外配置时仍保持标准兼容
         行为，而不是把无效配置直接传给上游。
         """
-        configured_name = cls._load_model_extra(model).get("token_param_name")
+        configured_name = load_model_extra(model).get("token_param_name")
         if configured_name in {"max_tokens", "max_completion_tokens"}:
             return configured_name
         return "max_tokens"
@@ -340,7 +237,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
         thinking_budget = model_parameters.pop("thinking_budget", None)
         thinking_level = model_parameters.pop("thinking_level", None)
         include_thoughts = model_parameters.pop("include_thoughts", None)
-        thinking_config = self._load_model_extra(model).get("thinking", {})
+        thinking_config = load_model_extra(model).get("thinking", {})
         if not isinstance(thinking_config, dict):
             return
 
@@ -508,7 +405,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
         """
         normalized_credentials = self._normalize_credentials(model, credentials)
         available_models = self._list_available_models(normalized_credentials)
-        predefined_models = self._load_predefined_chat_models()
+        predefined_models = load_predefined_chat_models()
         matched_models = predefined_models & available_models
         if not matched_models:
             raise CredentialsValidateFailedError(
@@ -643,110 +540,6 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
         usage.currency = format_usage_currency(raw_usage, log_id=str(log_id) if log_id else None)
         return usage
 
-    @classmethod
-    def _drop_analyze_channel(cls, prompt_messages: list[PromptMessage]) -> None:
-        """移除历史 assistant 消息里的思考内容。
-
-        Dify 会把上一轮 assistant 回复继续放进下一轮上下文。如果历史回复里
-        已经带有 ``<think>...</think>``，下一次请求会把旧思考链也发给模型，
-        既浪费 token，也容易污染下一轮回答。因此只在历史 assistant 文本里
-        做轻量清理，不改用户原始输入。
-        """
-        for prompt_message in prompt_messages:
-            if not isinstance(prompt_message, AssistantPromptMessage):
-                continue
-            if not isinstance(prompt_message.content, str):
-                continue
-            if "<think>" not in prompt_message.content:
-                continue
-            prompt_message.content = cls._THINK_PATTERN.sub("", prompt_message.content)
-
-    @staticmethod
-    def _apply_json_schema_prompt(model_parameters: dict, prompt_messages: list[PromptMessage]) -> None:
-        """把 Dify 的 json_schema 参数补成兼容端更容易遵循的系统提示。
-
-        Dify 会把 ``response_format=json_schema`` 和 ``json_schema`` 传进模型
-        参数，但并不是每个 OpenAI-compatible 网关都原生支持这个字段。官方插件
-        也采用了向 system prompt 注入 schema 的兼容策略。这里保留原参数不删，
-        让原生支持 json_schema 的上游仍有机会使用，同时用系统提示兜底。
-        """
-        if model_parameters.get("response_format") != "json_schema":
-            return
-
-        json_schema = model_parameters.get("json_schema")
-        if not json_schema:
-            return
-
-        structured_output_prompt = (
-            "Your response must be a JSON object that validates against the following JSON schema, and nothing else.\n"
-            f"JSON Schema: ```json\n{json_schema}\n```"
-        )
-        existing_system_prompt = next(
-            (p for p in prompt_messages if p.role == PromptMessageRole.SYSTEM),
-            None,
-        )
-        if existing_system_prompt:
-            existing_system_prompt.content = (
-                structured_output_prompt + "\n\n" + existing_system_prompt.content
-            )
-        else:
-            prompt_messages.insert(0, SystemPromptMessage(content=structured_output_prompt))
-
-    @classmethod
-    def _render_geo_prompt_references(cls, prompt_messages: list[PromptMessage], credentials: dict) -> None:
-        """渲染 system prompt 中的 Geo Prompt 引用。"""
-        for prompt_message in prompt_messages:
-            if prompt_message.role != PromptMessageRole.SYSTEM:
-                continue
-            if not isinstance(prompt_message.content, str):
-                continue
-            prompt_message.content = cls._render_geo_prompt_text(prompt_message.content, credentials)
-
-    @classmethod
-    def _reasoning_effort_from_tool_messages(cls, prompt_messages: list[PromptMessage]) -> Optional[str]:
-        """Read the next reasoning effort from the dedicated workflow tool only."""
-        reasoning_effort = None
-        for prompt_message in prompt_messages:
-            if not isinstance(prompt_message, ToolPromptMessage):
-                continue
-            if prompt_message.name != cls._REASONING_EFFORT_TOOL_NAME:
-                continue
-            if not isinstance(prompt_message.content, str):
-                continue
-            parsed_effort = cls._extract_reasoning_effort(prompt_message.content)
-            if parsed_effort:
-                reasoning_effort = parsed_effort
-        return reasoning_effort
-
-    @classmethod
-    def _extract_reasoning_effort(cls, content: str) -> Optional[str]:
-        payload = cls._try_parse_json(content.strip())
-        # Dify wraps Workflow tool output as tool name -> result -> output.
-        for _ in range(4):
-            if not isinstance(payload, dict):
-                return None
-
-            effort = payload.get("reasoning_effort")
-            if isinstance(effort, str) and effort.lower() in cls._REASONING_EFFORT_VALUES:
-                return effort.lower()
-
-            if len(payload) != 1:
-                return None
-            wrapped_value = next(iter(payload.values()))
-            if not isinstance(wrapped_value, str):
-                return None
-            payload = cls._try_parse_json(wrapped_value.strip())
-        return None
-
-    @staticmethod
-    def _try_parse_json(text: str):
-        if not text or text[0] not in "{[":
-            return None
-        try:
-            return json.loads(text)
-        except ValueError:
-            return None
-
     def _invoke(
         self,
         model: str,
@@ -759,7 +552,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
         user: Optional[str] = None,
     ) -> Union[LLMResult, Generator]:
         effective_model_parameters = dict(model_parameters)
-        reasoning_effort = self._reasoning_effort_from_tool_messages(prompt_messages)
+        reasoning_effort = reasoning_effort_from_tool_messages(prompt_messages)
         if reasoning_effort:
             effective_model_parameters["reasoning_effort"] = reasoning_effort
 
@@ -829,10 +622,10 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                     include_files=family == "openai_responses",
                 )
             with invocation_log.step("geo_prompt_render"):
-                self._render_geo_prompt_references(prompt_messages, credentials)
+                render_geo_prompt_references(prompt_messages, credentials, invocation_log)
             with invocation_log.step("analyze_channel_drop"):
                 with suppress(Exception):
-                    self._drop_analyze_channel(prompt_messages)
+                    drop_analyze_channel(prompt_messages)
             invocation_log.set_request(
                 prompt_metrics_final=prompt_messages_metrics(prompt_messages),
                 prompt_messages_final=prompt_messages_summary(prompt_messages),
@@ -946,7 +739,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                 return result
 
             with invocation_log.step("json_schema_prompt_apply"):
-                self._apply_json_schema_prompt(effective_model_parameters, prompt_messages)
+                apply_json_schema_prompt(effective_model_parameters, prompt_messages)
             with invocation_log.step("model_parameters_normalize"):
                 normalized_model_parameters = self._normalize_model_parameters(model, effective_model_parameters)
             replay_body = self._build_openai_compatible_replay_body(
@@ -1173,40 +966,3 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
             message=assistant_message,
             usage=self._calc_response_usage(model, credentials, prompt_tokens, completion_tokens),
         )
-
-    @classmethod
-    @lru_cache(maxsize=1)
-    def _load_predefined_chat_models(cls) -> set[str]:
-        """从模型 YAML 读取预定义聊天模型名，避免 Python 列表和 YAML 重复维护。"""
-        model_names: set[str] = set()
-        for payload in cls._load_model_configs().values():
-            if (
-                payload.get("model_type") == "llm"
-                and payload.get("model_properties", {}).get("mode") == "chat"
-            ):
-                model_name = payload.get("model")
-                if isinstance(model_name, str) and model_name:
-                    model_names.add(model_name)
-        return model_names
-
-    @classmethod
-    @lru_cache(maxsize=1)
-    def _load_model_configs(cls) -> dict[str, dict]:
-        """按模型名读取全部模型 YAML 配置。"""
-        models_dir = Path(__file__).resolve().parent
-        configs: dict[str, dict] = {}
-        for model_file in models_dir.glob("*.yaml"):
-            if model_file.name.startswith("_"):
-                continue
-            with model_file.open("r", encoding="utf-8") as file:
-                payload = yaml.safe_load(file) or {}
-            model_name = payload.get("model")
-            if isinstance(model_name, str) and model_name:
-                configs[model_name] = payload
-        return configs
-
-    @classmethod
-    def _load_model_extra(cls, model: str) -> dict:
-        """读取模型 YAML 的 extra 配置。"""
-        extra = cls._load_model_configs().get(model, {}).get("extra", {})
-        return extra if isinstance(extra, dict) else {}
