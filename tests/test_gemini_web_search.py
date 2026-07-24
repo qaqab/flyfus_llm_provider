@@ -55,6 +55,22 @@ def test_native_gemini_empty_event_diagnostic_keeps_finish_and_safety_details() 
     ]
 
 
+def test_native_gemini_empty_stream_raises_instead_of_returning_stop() -> None:
+    class Response:
+        def iter_lines(self, decode_unicode=False):
+            assert decode_unicode is False
+            yield b'data: {"candidates":[{"finishReason":"SAFETY"}]}'
+
+    with pytest.raises(InvokeError, match="finish_reasons=\\['SAFETY'\\]"):
+        list(
+            _adapter()._handle_stream(
+                model="gemini-3.6-flash",
+                credentials={},
+                response=Response(),
+            )
+        )
+
+
 def test_native_gemini_omits_search_when_disabled() -> None:
     body = _adapter().build_body(
         model="gemini-3.5-flash",

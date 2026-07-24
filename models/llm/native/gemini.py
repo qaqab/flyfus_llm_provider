@@ -359,8 +359,15 @@ class GeminiNativeDocumentAdapter:
         tool_calls = self._extract_tool_calls(payload)
         usage_payload = payload.get("usageMetadata") or {}
         raw_usage = self._raw_usage(usage_payload)
+        diagnostics = self._provider_diagnostics(payload)
         if invocation_log is not None:
-            invocation_log.set_response(upstream_usage=raw_usage)
+            invocation_log.set_response(
+                upstream_usage=raw_usage,
+                finish_reason=self._extract_finish_reason(payload),
+                provider_diagnostics=diagnostics,
+            )
+        if not self._has_visible_answer_text(payload) and not tool_calls:
+            self._raise_empty_response(invocation_log, diagnostics)
         usage = self._build_dify_usage(model, credentials, raw_usage)
         return LLMResult(
             model=model,
@@ -374,7 +381,13 @@ class GeminiNativeDocumentAdapter:
         finish_reason: Optional[str] = None
         in_thought = False
         pending_tool_calls: list[AssistantPromptMessage.ToolCall] = []
+        has_visible_answer_text = False
         event_count = 0
+        invalid_stream_event_count = 0
+        candidate_count = 0
+        finish_reasons: list[str] = []
+        prompt_feedback = None
+        safety_ratings: list[list[dict]] = []
         empty_event_count = 0
         empty_event_head: list[dict] = []
         empty_event_tail: list[dict] = []
@@ -407,6 +420,7 @@ class GeminiNativeDocumentAdapter:
             try:
                 event = json.loads(data)
             except ValueError:
+                invalid_stream_event_count += 1
                 record_empty_event(
                     {
                         "sequence": event_count + 1,
@@ -419,6 +433,16 @@ class GeminiNativeDocumentAdapter:
             event_count += 1
             usage_payload = event.get("usageMetadata") or usage_payload
             finish_reason = self._extract_finish_reason(event) or finish_reason
+            event_diagnostics = self._provider_diagnostics(event)
+            candidate_count = max(candidate_count, event_diagnostics["candidate_count"])
+            for reason in event_diagnostics["finish_reasons"]:
+                if reason not in finish_reasons:
+                    finish_reasons.append(reason)
+            prompt_feedback = event_diagnostics["prompt_feedback"] or prompt_feedback
+            for ratings in event_diagnostics["safety_ratings"]:
+                if ratings not in safety_ratings:
+                    safety_ratings.append(ratings)
+            has_visible_answer_text = has_visible_answer_text or self._has_visible_answer_text(event)
             delta, in_thought = self._extract_stream_text(event, in_thought)
             event_tool_calls = self._extract_tool_calls(event)
             pending_tool_calls.extend(event_tool_calls)
@@ -436,18 +460,23 @@ class GeminiNativeDocumentAdapter:
             )
 
         raw_usage = self._raw_usage(usage_payload or {})
+        empty_events = empty_event_head if empty_event_count <= 6 else empty_event_head + empty_event_tail
+        diagnostics = {
+            "candidate_count": candidate_count,
+            "finish_reasons": finish_reasons,
+            "prompt_feedback": prompt_feedback,
+            "safety_ratings": safety_ratings,
+            "stream_event_count": event_count,
+            "invalid_stream_event_count": invalid_stream_event_count,
+            "empty_event_count": empty_event_count,
+            "empty_event_samples": empty_events,
+        }
         if invocation_log is not None:
-            empty_events = empty_event_head if empty_event_count <= 6 else empty_event_head + empty_event_tail
             invocation_log.set_response(
                 upstream_usage=raw_usage,
                 stream_event_count=event_count,
                 finish_reason=finish_reason,
-                gemini_stream={
-                    "event_count": event_count,
-                    "empty_event_count": empty_event_count,
-                    "empty_event_samples": empty_events,
-                    "prompt_feedback": self._prompt_feedback(empty_events),
-                },
+                provider_diagnostics=diagnostics,
             )
         usage = self._build_dify_usage(model, credentials, raw_usage)
         if in_thought:
@@ -460,12 +489,15 @@ class GeminiNativeDocumentAdapter:
                 ),
             )
 
+        if not has_visible_answer_text and not pending_tool_calls:
+            self._raise_empty_response(invocation_log, diagnostics)
+
         yield LLMResultChunk(
             model=model,
             delta=LLMResultChunkDelta(
                 index=chunk_index + 1,
                 message=AssistantPromptMessage(content="", tool_calls=pending_tool_calls),
-                finish_reason="tool_calls" if pending_tool_calls else finish_reason or "STOP",
+                finish_reason="tool_calls" if pending_tool_calls else finish_reason,
                 usage=usage,
             ),
         )
@@ -540,6 +572,60 @@ class GeminiNativeDocumentAdapter:
         return None
 
     @staticmethod
+    def _has_visible_answer_text(payload: dict) -> bool:
+        for candidate in payload.get("candidates") or []:
+            content = candidate.get("content") or {}
+            for part in content.get("parts") or []:
+                if part.get("thought") is not True and str(part.get("text") or "").strip():
+                    return True
+        return False
+
+    @staticmethod
+    def _provider_diagnostics(payload: dict) -> dict:
+        candidates = [item for item in payload.get("candidates") or [] if isinstance(item, dict)]
+        finish_reasons = []
+        safety_ratings = []
+        for candidate in candidates:
+            reason = candidate.get("finishReason")
+            if reason and reason not in finish_reasons:
+                finish_reasons.append(str(reason))
+            ratings = GeminiNativeDocumentAdapter._diagnostic_safety_ratings(candidate.get("safetyRatings"))
+            if ratings:
+                safety_ratings.append(ratings)
+        return {
+            "candidate_count": len(candidates),
+            "finish_reasons": finish_reasons,
+            "prompt_feedback": GeminiNativeDocumentAdapter._diagnostic_prompt_feedback(
+                payload.get("promptFeedback")
+            ),
+            "safety_ratings": safety_ratings,
+        }
+
+    @staticmethod
+    def _diagnostic_safety_ratings(value: object) -> list[dict]:
+        if not isinstance(value, list):
+            return []
+        return [
+            {field: item[field] for field in ("category", "probability", "blocked") if field in item}
+            for item in value
+            if isinstance(item, dict)
+        ]
+
+    @staticmethod
+    def _diagnostic_prompt_feedback(value: object) -> Optional[dict]:
+        if not isinstance(value, dict):
+            return None
+        feedback = {
+            field: value[field]
+            for field in ("blockReason", "blockReasonMessage")
+            if field in value
+        }
+        ratings = GeminiNativeDocumentAdapter._diagnostic_safety_ratings(value.get("safetyRatings"))
+        if ratings:
+            feedback["safetyRatings"] = ratings
+        return feedback or None
+
+    @staticmethod
     def _stream_event_diagnostic(event: dict, raw_event: str, sequence: int) -> dict:
         """Keep enough upstream context to explain empty Gemini SSE events."""
         candidates = event.get("candidates") or []
@@ -565,12 +651,25 @@ class GeminiNativeDocumentAdapter:
         }
 
     @staticmethod
-    def _prompt_feedback(empty_events: list[dict]) -> Optional[dict]:
-        for event in reversed(empty_events):
-            feedback = event.get("prompt_feedback")
-            if isinstance(feedback, dict):
-                return feedback
-        return None
+    def _raise_empty_response(invocation_log, diagnostics: dict) -> None:
+        error_body = {
+            "reason": "empty_response",
+            "message": "Gemini 原生接口返回空响应",
+            "diagnostics": diagnostics,
+        }
+        if invocation_log is not None:
+            invocation_log.set_response(error_body=error_body)
+
+        prompt_feedback = diagnostics.get("prompt_feedback") or {}
+        details = [
+            f"candidate_count={diagnostics.get('candidate_count', 0)}",
+            f"finish_reasons={diagnostics.get('finish_reasons') or []}",
+        ]
+        if prompt_feedback.get("blockReason"):
+            details.append(f"prompt_block_reason={prompt_feedback['blockReason']}")
+        if diagnostics.get("stream_event_count") is not None:
+            details.append(f"stream_event_count={diagnostics['stream_event_count']}")
+        raise InvokeError(f"Gemini 原生接口返回空响应（{', '.join(details)}）")
 
 
 def snake_to_lower_camel(value: str) -> str:
