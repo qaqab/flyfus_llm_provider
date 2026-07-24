@@ -16,7 +16,7 @@ def _adapter() -> GeminiNativeDocumentAdapter:
 
 def test_native_gemini_uses_rest_google_search_tool() -> None:
     body = _adapter().build_body(
-        model="gemini-3.5-flash",
+        model="gemini-3.6-flash",
         prompt_messages=[UserPromptMessage(content="Search the web")],
         model_parameters={"enable_web_search": True},
         tools=None,
@@ -24,6 +24,35 @@ def test_native_gemini_uses_rest_google_search_tool() -> None:
     )
 
     assert body["tools"] == [{"googleSearch": {}}]
+
+
+def test_native_gemini_empty_event_diagnostic_keeps_finish_and_safety_details() -> None:
+    event = {
+        "promptFeedback": {"blockReason": "SAFETY"},
+        "usageMetadata": {"promptTokenCount": 123},
+        "candidates": [
+            {
+                "finishReason": "MALFORMED_FUNCTION_CALL",
+                "finishMessage": "invalid arguments",
+                "safetyRatings": [{"category": "HARM_CATEGORY_DANGEROUS_CONTENT"}],
+                "content": {"parts": []},
+            }
+        ],
+    }
+
+    diagnostic = GeminiNativeDocumentAdapter._stream_event_diagnostic(
+        event,
+        raw_event='{"candidates":[]}',
+        sequence=3,
+    )
+
+    assert diagnostic["sequence"] == 3
+    assert diagnostic["prompt_feedback"] == {"blockReason": "SAFETY"}
+    assert diagnostic["usage_metadata"] == {"promptTokenCount": 123}
+    assert diagnostic["candidates"][0]["finish_reason"] == "MALFORMED_FUNCTION_CALL"
+    assert diagnostic["candidates"][0]["safety_ratings"] == [
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT"}
+    ]
 
 
 def test_native_gemini_omits_search_when_disabled() -> None:

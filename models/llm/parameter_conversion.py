@@ -28,6 +28,7 @@ GEMINI_WEB_SEARCH_MODELS = frozenset(
         "gemini-3-flash-preview",
         "gemini-3.1-pro-preview",
         "gemini-3.5-flash",
+        "gemini-3.6-flash",
     }
 )
 

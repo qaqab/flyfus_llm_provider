@@ -374,23 +374,56 @@ class GeminiNativeDocumentAdapter:
         finish_reason: Optional[str] = None
         in_thought = False
         pending_tool_calls: list[AssistantPromptMessage.ToolCall] = []
+        event_count = 0
+        empty_event_count = 0
+        empty_event_head: list[dict] = []
+        empty_event_tail: list[dict] = []
+
+        def record_empty_event(diagnostic: dict) -> None:
+            nonlocal empty_event_count
+            empty_event_count += 1
+            if len(empty_event_head) < 6:
+                empty_event_head.append(diagnostic)
+            empty_event_tail.append(diagnostic)
+            if len(empty_event_tail) > 6:
+                empty_event_tail.pop(0)
 
         for raw_line in response.iter_lines(decode_unicode=False):
             if not raw_line:
                 continue
             line = raw_line.decode("utf-8", errors="replace").strip()
-            if line.startswith(":") or not line.startswith("data:"):
+            if line.startswith(":"):
+                continue
+            if not line.startswith("data:"):
+                record_empty_event(
+                    {
+                        "sequence": event_count + 1,
+                        "unrecognized_sse_line": True,
+                        "raw_event": line[:4000],
+                    }
+                )
                 continue
             data = line.removeprefix("data:").strip()
             try:
                 event = json.loads(data)
             except ValueError:
+                record_empty_event(
+                    {
+                        "sequence": event_count + 1,
+                        "parse_error": True,
+                        "raw_event": data[:4000],
+                    }
+                )
                 continue
 
+            event_count += 1
             usage_payload = event.get("usageMetadata") or usage_payload
             finish_reason = self._extract_finish_reason(event) or finish_reason
             delta, in_thought = self._extract_stream_text(event, in_thought)
-            pending_tool_calls.extend(self._extract_tool_calls(event))
+            event_tool_calls = self._extract_tool_calls(event)
+            pending_tool_calls.extend(event_tool_calls)
+            if not delta and not event_tool_calls:
+                record_empty_event(self._stream_event_diagnostic(event, data, event_count))
             if not delta:
                 continue
             chunk_index += 1
@@ -404,7 +437,18 @@ class GeminiNativeDocumentAdapter:
 
         raw_usage = self._raw_usage(usage_payload or {})
         if invocation_log is not None:
-            invocation_log.set_response(upstream_usage=raw_usage)
+            empty_events = empty_event_head if empty_event_count <= 6 else empty_event_head + empty_event_tail
+            invocation_log.set_response(
+                upstream_usage=raw_usage,
+                stream_event_count=event_count,
+                finish_reason=finish_reason,
+                gemini_stream={
+                    "event_count": event_count,
+                    "empty_event_count": empty_event_count,
+                    "empty_event_samples": empty_events,
+                    "prompt_feedback": self._prompt_feedback(empty_events),
+                },
+            )
         usage = self._build_dify_usage(model, credentials, raw_usage)
         if in_thought:
             chunk_index += 1
@@ -493,6 +537,39 @@ class GeminiNativeDocumentAdapter:
             finish_reason = candidate.get("finishReason")
             if finish_reason:
                 return finish_reason
+        return None
+
+    @staticmethod
+    def _stream_event_diagnostic(event: dict, raw_event: str, sequence: int) -> dict:
+        """Keep enough upstream context to explain empty Gemini SSE events."""
+        candidates = event.get("candidates") or []
+        candidate_summaries = []
+        for candidate in candidates[:8]:
+            if not isinstance(candidate, dict):
+                continue
+            candidate_summaries.append(
+                {
+                    "finish_reason": candidate.get("finishReason"),
+                    "finish_message": candidate.get("finishMessage"),
+                    "safety_ratings": candidate.get("safetyRatings"),
+                    "content_part_count": len((candidate.get("content") or {}).get("parts") or []),
+                }
+            )
+        return {
+            "sequence": sequence,
+            "candidate_count": len(candidates),
+            "candidates": candidate_summaries,
+            "prompt_feedback": event.get("promptFeedback"),
+            "usage_metadata": event.get("usageMetadata"),
+            "raw_event": raw_event[:4000],
+        }
+
+    @staticmethod
+    def _prompt_feedback(empty_events: list[dict]) -> Optional[dict]:
+        for event in reversed(empty_events):
+            feedback = event.get("prompt_feedback")
+            if isinstance(feedback, dict):
+                return feedback
         return None
 
 

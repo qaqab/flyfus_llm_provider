@@ -340,6 +340,8 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
           模型时放入 ``chat_template_kwargs.reasoning_effort``；
         - ``mode: openrouter``：转换为 ``reasoning.effort``，并只接受已确认的
           ``high``、``medium``、``low``、``minimal``、``none``，非法值不发送。
+        - ``mode: gemini``：转换为 ``thinking_config.thinking_level``。Gemini 没有
+          ``xhigh`` 枚举，因此把它降级为 ``High``。
 
         未声明上述映射的模型会保留原有参数处理路径。例如 GPT/Grok 的 Responses
         适配器会直接读取 ``reasoning_effort``，并生成
@@ -354,6 +356,16 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
             reasoning_effort = model_parameters.pop("reasoning_effort", None)
             if reasoning_effort in {"high", "medium", "low", "minimal", "none"}:
                 model_parameters.setdefault("reasoning", {})["effort"] = reasoning_effort
+        elif mode == "gemini":
+            reasoning_effort = model_parameters.pop("reasoning_effort", None)
+            thinking_level = {
+                "low": "Low",
+                "medium": "Medium",
+                "high": "High",
+                "xhigh": "High",
+            }.get(reasoning_effort)
+            if thinking_level:
+                model_parameters.setdefault("thinking_config", {})["thinking_level"] = thinking_level
 
     @staticmethod
     def _to_bool(value: object) -> bool:

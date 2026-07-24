@@ -170,6 +170,7 @@ class InvocationLog:
                 "stream_event_count": self.response.get("stream_event_count"),
                 "stream_event_counts": self.response.get("stream_event_counts"),
                 "finish_reason": self.response.get("finish_reason"),
+                "gemini_stream": self.response.get("gemini_stream"),
             },
             "output": {
                 "text": output_text,
