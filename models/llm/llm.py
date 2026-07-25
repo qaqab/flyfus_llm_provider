@@ -699,7 +699,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                                 return
                             except InvokeError as error:
                                 reason = self._gemini_retry_reason(error)
-                                if reason is None or retries >= 3:
+                                if reason is None or retries >= 10:
                                     raise
                                 retries += 1
                                 invocation_log.response.pop("error_body", None)
@@ -707,7 +707,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                                     "gemini_retry",
                                     reason=reason,
                                     retry=retries,
-                                    max_retries=3,
+                                    max_retries=10,
                                 )
 
                     return wrap_stream_with_invocation_log(
@@ -723,7 +723,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                         break
                     except InvokeError as error:
                         reason = self._gemini_retry_reason(error)
-                        if reason is None or retries >= 3:
+                        if reason is None or retries >= 10:
                             raise
                         retries += 1
                         invocation_log.response.pop("error_body", None)
@@ -731,7 +731,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                             "gemini_retry",
                             reason=reason,
                             retry=retries,
-                            max_retries=3,
+                            max_retries=10,
                         )
                 result_summary = llm_result_summary(result)
                 invocation_log.set_response(**result_summary)
