@@ -667,25 +667,57 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                         },
                     },
                 )
-                with invocation_log.step("upstream_request", adapter="gemini_native"):
-                    result = gemini_adapter.invoke(
-                        model=model,
-                        credentials=normalized_credentials,
-                        prompt_messages=prompt_messages,
-                        model_parameters=effective_model_parameters,
-                        tools=tools,
-                        stop=stop,
-                        stream=stream,
-                        user=user,
-                        invocation_log=invocation_log,
-                    )
+                def invoke_gemini():
+                    with invocation_log.step("upstream_request", adapter="gemini_native"):
+                        return gemini_adapter.invoke(
+                            model=model,
+                            credentials=normalized_credentials,
+                            prompt_messages=prompt_messages,
+                            model_parameters=effective_model_parameters,
+                            tools=tools,
+                            stop=stop,
+                            stream=stream,
+                            user=user,
+                            invocation_log=invocation_log,
+                        )
+
                 if stream:
+                    def retry_gemini_stream():
+                        retries = 0
+                        while True:
+                            try:
+                                yield from invoke_gemini()
+                                return
+                            except InvokeError as error:
+                                if "MALFORMED_FUNCTION_CALL" not in str(error) or retries >= 3:
+                                    raise
+                                retries += 1
+                                invocation_log.event(
+                                    "gemini_malformed_function_call_retry",
+                                    retry=retries,
+                                    max_retries=3,
+                                )
+
                     return wrap_stream_with_invocation_log(
-                        result,
+                        retry_gemini_stream(),
                         invocation_log,
                         usage_reporter,
                         self._failure_stream_chunk_factory(model, prompt_messages),
                     )
+                retries = 0
+                while True:
+                    try:
+                        result = invoke_gemini()
+                        break
+                    except InvokeError as error:
+                        if "MALFORMED_FUNCTION_CALL" not in str(error) or retries >= 3:
+                            raise
+                        retries += 1
+                        invocation_log.event(
+                            "gemini_malformed_function_call_retry",
+                            retry=retries,
+                            max_retries=3,
+                        )
                 result_summary = llm_result_summary(result)
                 invocation_log.set_response(**result_summary)
                 invocation_log.success(result_type=type(result).__name__, output_text=result_summary.get("output_text"))
