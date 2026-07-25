@@ -3,6 +3,7 @@ import pytest
 from models.llm.llm import FlyfusLargeLanguageModel
 from models.llm.native.gemini import GeminiNativeDocumentAdapter
 from dify_plugin.entities.model.message import UserPromptMessage
+from dify_plugin.errors.model import InvokeError
 
 
 @pytest.mark.parametrize(
@@ -35,3 +36,19 @@ def test_set_next_step_effort_maps_to_gemini_thinking_level(
 
     assert "reasoning_effort" not in parameters
     assert body["generationConfig"]["thinkingConfig"]["thinkingLevel"] == thinking_level
+
+
+def test_gemini_retry_reason_covers_empty_and_malformed_responses() -> None:
+    assert (
+        FlyfusLargeLanguageModel._gemini_retry_reason(
+            InvokeError("Gemini 原生接口返回空响应（finish_reasons=['STOP']）")
+        )
+        == "empty_response"
+    )
+    assert (
+        FlyfusLargeLanguageModel._gemini_retry_reason(
+            InvokeError("finishReason=MALFORMED_FUNCTION_CALL")
+        )
+        == "malformed_function_call"
+    )
+    assert FlyfusLargeLanguageModel._gemini_retry_reason(InvokeError("Gemini 请求超时")) is None

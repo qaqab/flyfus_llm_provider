@@ -536,6 +536,15 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
             build_dify_usage=self._build_dify_usage,
         )
 
+    @staticmethod
+    def _gemini_retry_reason(error: InvokeError) -> Optional[str]:
+        message = str(error)
+        if "MALFORMED_FUNCTION_CALL" in message:
+            return "malformed_function_call"
+        if "Gemini 原生接口返回空响应" in message:
+            return "empty_response"
+        return None
+
     def _build_dify_usage(self, model: str, credentials: dict, raw_usage: dict):
         """Build Dify's fixed usage object from the upstream usage source of truth."""
         normalized = normalize_upstream_usage(raw_usage)
@@ -689,11 +698,14 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                                 yield from invoke_gemini()
                                 return
                             except InvokeError as error:
-                                if "MALFORMED_FUNCTION_CALL" not in str(error) or retries >= 3:
+                                reason = self._gemini_retry_reason(error)
+                                if reason is None or retries >= 3:
                                     raise
                                 retries += 1
+                                invocation_log.response.pop("error_body", None)
                                 invocation_log.event(
-                                    "gemini_malformed_function_call_retry",
+                                    "gemini_retry",
+                                    reason=reason,
                                     retry=retries,
                                     max_retries=3,
                                 )
@@ -710,11 +722,14 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                         result = invoke_gemini()
                         break
                     except InvokeError as error:
-                        if "MALFORMED_FUNCTION_CALL" not in str(error) or retries >= 3:
+                        reason = self._gemini_retry_reason(error)
+                        if reason is None or retries >= 3:
                             raise
                         retries += 1
+                        invocation_log.response.pop("error_body", None)
                         invocation_log.event(
-                            "gemini_malformed_function_call_retry",
+                            "gemini_retry",
+                            reason=reason,
                             retry=retries,
                             max_retries=3,
                         )
