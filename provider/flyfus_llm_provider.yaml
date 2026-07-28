@@ -19,7 +19,7 @@ provider_credential_schema:
         en_US: API Key
         zh_Hans: API Key
       type: secret-input
-      required: true
+      required: false
       placeholder:
         en_US: Enter API Key
         zh_Hans: 输入 API Key
@@ -28,10 +28,22 @@ provider_credential_schema:
         en_US: API endpoint URL
         zh_Hans: API 地址
       type: text-input
-      required: true
+      required: false
       placeholder:
         en_US: Base URL, e.g. https://openapi.flyposter.ai/v1
         zh_Hans: Base URL，例如 https://openapi.flyposter.ai/v1
+    - variable: gemini_api_key
+      label:
+        en_US: Gemini Official API Key (enables direct access)
+        zh_Hans: Gemini 官方 API Key（填写即启用直连）
+      type: secret-input
+      required: false
+      placeholder:
+        en_US: Enter Gemini Studio API key
+        zh_Hans: 输入 Gemini Studio API key
+      help:
+        en_US: Gemini models use Google's official API when this is filled; otherwise they use the configured relay.
+        zh_Hans: 填写后 Gemini 使用 Google 官方 API；留空则使用已配置的中转。
     - variable: sls_endpoint
       label:
         en_US: SLS Endpoint
