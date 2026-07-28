@@ -1,7 +1,7 @@
 import pytest
 
 from models.llm.native.gemini import DEFAULT_THOUGHT_SIGNATURE, GeminiNativeDocumentAdapter
-from models.llm.agent_context import inject_context_from_tool_messages
+from models.llm.agent_context import _extract_context_urls, inject_context_from_tool_messages
 from dify_plugin.entities.model.message import AssistantPromptMessage, ToolPromptMessage, UserPromptMessage
 from dify_plugin.errors.model import InvokeError
 
@@ -185,17 +185,13 @@ def test_native_gemini_normalizes_false_schemas() -> None:
     }
 
 
-def test_native_gemini_uses_public_url_from_read_file_context() -> None:
+def test_native_gemini_uses_url_from_plain_text_context() -> None:
     image_url = "https://m.media-amazon.com/images/I/81TZvhKFX9L._AC_SL1500_.jpg"
     prompt_messages = [
         ToolPromptMessage(
             name="read_file",
             tool_call_id="read-file-1",
-            content=(
-                '<FLYFUS_CONTEXT>{"version":1,"type":"flyfus_context","urls":['
-                f'"{image_url}"'
-                "]}</FLYFUS_CONTEXT>"
-            ),
+            content=f"<FLYFUS_CONTEXT>Reference image: {image_url}</FLYFUS_CONTEXT>",
         )
     ]
     inject_context_from_tool_messages(prompt_messages, include_files=False)
@@ -211,6 +207,68 @@ def test_native_gemini_uses_public_url_from_read_file_context() -> None:
     assert body["contents"][-1]["parts"][-1] == {
         "fileData": {"mimeType": "image/jpeg", "fileUri": image_url}
     }
+
+
+def test_native_gemini_uses_url_from_json_context() -> None:
+    image_url = "https://example.com/a.jpg"
+    prompt_messages = [
+        ToolPromptMessage(
+            name="read_file",
+            tool_call_id="read-file-1",
+            content=f'<FLYFUS_CONTEXT>{{"data":["{image_url}"]}}</FLYFUS_CONTEXT>',
+        )
+    ]
+
+    inject_context_from_tool_messages(prompt_messages, include_files=False)
+
+    body = _adapter().build_body(
+        model="gemini-3.5-flash",
+        prompt_messages=prompt_messages,
+        model_parameters={},
+        tools=None,
+        stop=None,
+    )
+
+    assert body["contents"][-1]["parts"][-1] == {
+        "fileData": {"mimeType": "image/jpeg", "fileUri": image_url}
+    }
+
+
+def test_context_regex_classifies_image_and_file_urls() -> None:
+    image_url = "https://example.com/a.jpg?signature=abc"
+    file_url = "https://example.com/report.pdf"
+
+    context_urls = _extract_context_urls(
+        f"<FLYFUS_CONTEXT>image: {image_url}\nfile: {file_url}</FLYFUS_CONTEXT>"
+    )
+
+    assert context_urls == [(image_url, "image"), (file_url, "file")]
+
+
+def test_context_regex_ignores_url_without_hostname() -> None:
+    assert _extract_context_urls("<FLYFUS_CONTEXT>http:///a.jpg</FLYFUS_CONTEXT>") == []
+
+
+def test_context_tags_are_supported_and_urls_are_deduplicated() -> None:
+    first_image_url = "https://example.com/a.jpg"
+    second_image_url = "https://example.com/b.png"
+    file_url = "https://example.com/report.pdf"
+    prompt_messages = [
+        ToolPromptMessage(
+            name="read_file",
+            tool_call_id="read-file-1",
+            content=(
+                f"<FLYFUS_CONTEXT>{first_image_url}</FLYFUS_CONTEXT>"
+                f"<FLYFUS_FILE>{file_url}</FLYFUS_FILE>"
+                f"<FLYFUS_COMPONENT>{first_image_url} {second_image_url}</FLYFUS_COMPONENT>"
+            ),
+        )
+    ]
+
+    inject_context_from_tool_messages(prompt_messages, include_files=True)
+
+    assert len(prompt_messages) == 2
+    assert len(prompt_messages[-1].content) == 4
 
 
 def test_native_gemini_omits_empty_history_messages() -> None:

@@ -1,7 +1,5 @@
-import json
 import mimetypes
 import re
-from contextlib import suppress
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -14,9 +12,21 @@ from dify_plugin.entities.model.message import (
     UserPromptMessage,
 )
 
-_CONTEXT_PATTERN = re.compile(r"<FLYFUS_CONTEXT>(.*?)</FLYFUS_CONTEXT>", re.DOTALL)
+# Every supported tag uses the same URL extraction rules. The backreference keeps
+# an opening tag from matching a different closing tag.
+_CONTEXT_PATTERN = re.compile(
+    r"<(?P<tag>FLYFUS_CONTEXT|FLYFUS_FILE|FLYFUS_COMPONENT)>(?P<content>.*?)</(?P=tag)>",
+    re.DOTALL,
+)
 _IMAGE_URL_SUFFIXES = (".png", ".jpg", ".jpeg")
 _FILE_URL_SUFFIXES = (".pdf", ".md", ".xlsx", ".csv", ".txt", ".html")
+# Context is intentionally treated as plain text. This also finds URLs inside JSON,
+# lists, and prose without depending on a field name or JSON parsing.
+_CONTEXT_URL_PATTERN = re.compile(
+    r"https?://[^\s<>\"']+?\.(?:png|jpe?g|pdf|md|xlsx|csv|txt|html)"
+    r"(?:[?#][^\s<>\"']*)?(?=$|[\s<>\"'),.;:!?\]}])",
+    re.IGNORECASE,
+)
 
 
 def inject_context_from_tool_messages(
@@ -29,29 +39,20 @@ def inject_context_from_tool_messages(
     parts: list[object] = []
     image_count = 0
     file_count = 0
-    seen_images: set[str] = set()
-    seen_files: set[str] = set()
+    seen_urls: set[str] = set()
 
     for prompt_message in prompt_messages:
-        for payload in _extract_context_payloads_from_message(prompt_message):
-            for image_context in _context_items(payload, "images"):
-                url = _image_url(image_context)
-                if not url or url in seen_images:
-                    continue
-                seen_images.add(url)
-                image_count += 1
-                parts.append(_image_url_to_prompt_content(url, _optional_string(image_context.get("detail"))))
-
-            if not include_files:
+        for url, context_kind in _extract_context_urls_from_message(prompt_message):
+            if url in seen_urls or (context_kind == "file" and not include_files):
                 continue
+            seen_urls.add(url)
 
-            for file_context in _context_items(payload, "files"):
-                url = _file_url(file_context)
-                if not url or url in seen_files:
-                    continue
-                seen_files.add(url)
+            if context_kind == "image":
+                image_count += 1
+                parts.append(_image_url_to_prompt_content(url))
+            else:
                 file_count += 1
-                parts.append(_file_url_to_prompt_content(url, file_context))
+                parts.append(_file_url_to_prompt_content(url))
 
     if not parts:
         return
@@ -68,15 +69,15 @@ def inject_context_from_tool_messages(
     )
 
 
-def _extract_context_payloads_from_message(prompt_message: PromptMessage) -> list[dict]:
+def _extract_context_urls_from_message(prompt_message: PromptMessage) -> list[tuple[str, str]]:
     if isinstance(prompt_message, ToolPromptMessage) and isinstance(prompt_message.content, str):
-        return _extract_context_payloads(prompt_message.content)
+        return _extract_context_urls(prompt_message.content)
 
     if isinstance(prompt_message, UserPromptMessage):
-        payloads: list[dict] = []
+        urls: list[tuple[str, str]] = []
         for text in _user_message_texts(prompt_message):
-            payloads.extend(_extract_context_payloads(text))
-        return payloads
+            urls.extend(_extract_context_urls(text))
+        return urls
 
     return []
 
@@ -95,94 +96,27 @@ def _user_message_texts(prompt_message: UserPromptMessage) -> list[str]:
     return texts
 
 
-def _extract_context_payloads(text: str) -> list[dict]:
-    payloads: list[dict] = []
+def _extract_context_urls(text: str) -> list[tuple[str, str]]:
+    context_urls: list[tuple[str, str]] = []
     for match in _CONTEXT_PATTERN.finditer(text):
-        raw_payload = match.group(1).strip()
-        for payload_text in _payload_text_candidates(raw_payload):
-            try:
-                payload = json.loads(payload_text)
-            except ValueError:
-                continue
-            normalized_payload = _normalize_context_payload(payload)
-            if normalized_payload is not None:
-                payloads.append(normalized_payload)
-                break
-    return payloads
+        context_urls.extend(_extract_urls(match.group("content")))
+    return context_urls
 
 
-def _payload_text_candidates(raw_payload: str) -> list[str]:
-    candidates = [raw_payload]
-    current = raw_payload
-    for _ in range(3):
-        with suppress(ValueError):
-            decoded = json.loads(f'"{current}"')
-            if isinstance(decoded, str) and decoded not in candidates:
-                candidates.append(decoded)
-                current = decoded
-                continue
-        break
-    return candidates
-
-
-def _context_items(payload: dict, key: str) -> list[dict]:
-    items = payload.get(key)
-    if not isinstance(items, list):
-        return []
-    return [item for item in items if isinstance(item, dict)]
-
-
-def _normalize_context_payload(payload: object) -> Optional[dict]:
-    if not isinstance(payload, dict):
-        return None
-
-    if payload.get("type") != "flyfus_context":
-        return None
-
-    if "images" in payload or "files" in payload:
-        return {
-            "images": _context_items(payload, "images"),
-            "files": _context_items(payload, "files"),
-        }
-
-    images: list[dict] = []
-    files: list[dict] = []
-    seen_urls: set[str] = set()
-    raw_urls = payload.get("urls")
-    if not isinstance(raw_urls, list):
-        return {"images": images, "files": files}
-
-    for raw_url in raw_urls:
-        url = _optional_string(raw_url)
-        if not url or url in seen_urls or not _is_public_url(url, allow_data=False):
+def _extract_urls(context_text: str) -> list[tuple[str, str]]:
+    urls: list[tuple[str, str]] = []
+    # JSON may escape forward slashes. Normalizing them lets the same URL regex
+    # handle ordinary text and serialized JSON without parsing either format.
+    normalized_text = context_text.replace(r"\/", "/")
+    for raw_url in _CONTEXT_URL_PATTERN.findall(normalized_text):
+        # A URL in prose may be followed by punctuation that is not part of it.
+        url = raw_url.rstrip("),.;:!?]}")
+        if not _is_public_url(url):
             continue
-        seen_urls.add(url)
         context_kind = _url_context_kind(url)
-        if context_kind == "image":
-            mime_type = _guess_mime_type(url, default="image/png", prefix="image/")
-            images.append({"url": url, "mime_type": mime_type, "detail": "high"})
-        elif context_kind == "file":
-            mime_type = _guess_mime_type(url, default="application/octet-stream")
-            files.append(
-                {
-                    "url": url,
-                    "mime_type": mime_type,
-                    "filename": _filename_from_url(url) or "document",
-                }
-            )
-
-    return {"images": images, "files": files}
-
-
-def _image_url(item: dict) -> Optional[str]:
-    url = _optional_string(item.get("url"))
-    if not url or not _is_public_url(url, allow_data=True):
-        return None
-    return url
-
-
-def _is_image_url(url: str) -> bool:
-    return urlparse(url).path.lower().endswith(_IMAGE_URL_SUFFIXES)
+        if context_kind:
+            urls.append((url, context_kind))
+    return urls
 
 
 def _url_context_kind(url: str) -> Optional[str]:
@@ -194,31 +128,18 @@ def _url_context_kind(url: str) -> Optional[str]:
     return None
 
 
-def _file_url(item: dict) -> Optional[str]:
-    url = _optional_string(item.get("url"))
-    if not url or not _is_public_url(url, allow_data=False):
-        return None
-    return url
-
-
-def _image_url_to_prompt_content(
-    image_url: str,
-    detail: Optional[str],
-) -> ImagePromptMessageContent:
+def _image_url_to_prompt_content(image_url: str) -> ImagePromptMessageContent:
     return ImagePromptMessageContent(
         format="url",
         url=image_url,
         mime_type=_guess_mime_type(image_url, default="image/png", prefix="image/"),
-        detail=_image_detail(detail),
+        detail=ImagePromptMessageContent.DETAIL.HIGH,
     )
 
 
-def _file_url_to_prompt_content(file_url: str, file_context: dict) -> DocumentPromptMessageContent:
-    filename = _optional_string(file_context.get("filename")) or _filename_from_url(file_url) or "document"
-    mime_type = (
-        _optional_string(file_context.get("mime_type"))
-        or _guess_mime_type(file_url, default="application/octet-stream")
-    )
+def _file_url_to_prompt_content(file_url: str) -> DocumentPromptMessageContent:
+    filename = _filename_from_url(file_url) or "document"
+    mime_type = _guess_mime_type(file_url, default="application/octet-stream")
     return DocumentPromptMessageContent(
         format="url",
         url=file_url,
@@ -237,26 +158,21 @@ def _context_instruction(*, image_count: int, file_count: int) -> str:
     return f"External context refreshed by Flyfus tool output. Use the attached {attachment_label} when answering."
 
 
-def _is_public_url(value: str, *, allow_data: bool) -> bool:
+def _is_public_url(value: str) -> bool:
     parsed = urlparse(value.strip())
-    if allow_data and parsed.scheme == "data":
-        return True
     if parsed.scheme not in {"http", "https"}:
         return False
-    return parsed.hostname not in {"localhost", "127.0.0.1", "0.0.0.0", "web", "nginx", "api"}
-
-
-def _image_detail(detail: Optional[str]) -> ImagePromptMessageContent.DETAIL:
-    if isinstance(detail, str) and detail.lower() == "high":
-        return ImagePromptMessageContent.DETAIL.HIGH
-    return ImagePromptMessageContent.DETAIL.LOW
+    return bool(parsed.hostname) and parsed.hostname not in {
+        "localhost",
+        "127.0.0.1",
+        "0.0.0.0",
+        "web",
+        "nginx",
+        "api",
+    }
 
 
 def _guess_mime_type(url: str, *, default: str, prefix: Optional[str] = None) -> str:
-    if url.startswith("data:"):
-        match = re.match(r"^data:([^;,]+)[;,]", url)
-        if match and (prefix is None or match.group(1).startswith(prefix)):
-            return match.group(1)
     guessed_type, _ = mimetypes.guess_type(urlparse(url).path)
     if guessed_type and (prefix is None or guessed_type.startswith(prefix)):
         return guessed_type
@@ -267,7 +183,3 @@ def _filename_from_url(url: str) -> str:
     path = urlparse(url).path
     filename = path.rsplit("/", 1)[-1]
     return filename.strip()
-
-
-def _optional_string(value: object) -> Optional[str]:
-    return value if isinstance(value, str) and value.strip() else None

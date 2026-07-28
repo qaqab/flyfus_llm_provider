@@ -9,45 +9,31 @@ Chat App 里用户直接上传的图片和文档走 Dify 原生附件能力，�
 工具输出里必须包含：
 
 ```text
-<DIFY_CONTEXT>{"version":1,"type":"dify_context","images":[],"files":[]}</DIFY_CONTEXT>
+<FLYFUS_CONTEXT>
+image1: "https://example.com/a.png"
+file1: "https://example.com/a.xlsx"
+</FLYFUS_CONTEXT>
 ```
 
 字段：
 
-- `type` 必须是 `dify_context`。
-- `images` 和 `files` 是对象数组。
-- 每个对象必须有 `url`。
-- 图片可选 `filename`、`mime_type`、`detail`。
-- 文件可选 `filename`、`mime_type`。
+- 支持 `FLYFUS_CONTEXT`、`FLYFUS_FILE`、`FLYFUS_COMPONENT` 三种标签。
+- 每种标签内部都按正则扫描公网 URL，不要求 JSON 或字段名。
+- 标签内部可以是普通文本、JSON、列表或它们的组合。
+- 图片支持 PNG、JPG、JPEG；文件支持 PDF、MD、XLSX、CSV、TXT、HTML。
+- 同一次模型调用中，相同 URL 只会作为一个附件注入。
 
 示例：
 
-```json
-{
-  "version": 1,
-  "type": "dify_context",
-  "images": [
-    {
-      "url": "https://example.com/a.png",
-      "detail": "high"
-    }
-  ],
-  "files": [
-    {
-      "url": "https://example.com/a.xlsx",
-      "filename": "a.xlsx",
-      "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    }
-  ]
-}
+```text
+<FLYFUS_CONTEXT>{"data":["https://example.com/a.png","https://example.com/a.xlsx"]}</FLYFUS_CONTEXT>
 ```
 
-`read_files` 推荐接收上面的 JSON 对象。为了降低 Agent 调用失败率，也兼容单个 URL 字符串和 URL 字符串数组。
+`read_file` 工具接收逗号或换行分隔的 URL，并输出标签内的换行 URL 列表。
 
 ## URL 规则
 
-- 图片支持公网 `http://`、`https://`，也支持 `data:image/...`。
-- 文件只支持公网 `http://`、`https://`。
+- 图片和文件都只支持公网 `http://`、`https://` URL。
 - 不支持本地文件、Dify 内部 `files/...`、`localhost`、`api`、`web`、`nginx` 等内部地址。
 - 插件不下载、不上传、不保存 URL 内容。
 
