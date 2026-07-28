@@ -38,6 +38,7 @@ from models.llm.invocation_logging import (
     wrap_stream_with_invocation_log,
 )
 from models.llm.model_catalog import load_model_extra, load_predefined_chat_models
+from models.llm.model_route import apply_model_route, supported_route_parameters
 from models.llm.parameter_conversion import normalize_generation_parameters, normalize_max_tokens
 from models.llm.native.base import model_family
 from models.llm.native.gemini import GeminiNativeDocumentAdapter
@@ -597,11 +598,15 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
         stream: bool = True,
         user: Optional[str] = None,
     ) -> Union[LLMResult, Generator]:
-        effective_model_parameters = dict(model_parameters)
-        if model != "glm-5.2":
-            reasoning_effort = reasoning_effort_from_tool_messages(prompt_messages)
-            if reasoning_effort:
-                effective_model_parameters["reasoning_effort"] = reasoning_effort
+        configured_model = model
+        route = apply_model_route(model, model_parameters, prompt_messages)
+        model = route.model
+        effective_model_parameters = route.parameters
+        reasoning_effort = reasoning_effort_from_tool_messages(prompt_messages)
+        if reasoning_effort and (
+            not route.applied or "reasoning_effort" in supported_route_parameters(model)
+        ):
+            effective_model_parameters["reasoning_effort"] = reasoning_effort
 
         invocation_log = InvocationLog.from_credentials(
             model=model,
@@ -642,6 +647,9 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
 
         invocation_log.set_request(
             model=model,
+            configured_model=configured_model,
+            routed_model=model,
+            model_route_applied=route.applied,
             stream=stream,
             user=user,
             stop=stop,
@@ -652,12 +660,18 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
         )
         invocation_log.event(
             "invoke_started",
+            configured_model=configured_model,
+            routed_model=model,
+            model_route_applied=route.applied,
             model_parameters=effective_model_parameters,
             tools_count=len(tools or []),
             stop=stop,
             prompt_metrics=prompt_messages_metrics(prompt_messages),
         )
-        normalized_credentials = self._normalize_credentials(model, credentials)
+        route_credentials = dict(credentials)
+        if route.applied:
+            route_credentials.pop("endpoint_model_name", None)
+        normalized_credentials = self._normalize_credentials(model, route_credentials)
         normalized_credentials["_flyfus_invocation_id"] = invocation_log.invocation_id
         active_log_token = _ACTIVE_INVOCATION_LOG.set(invocation_log)
         family = model_family(model)
