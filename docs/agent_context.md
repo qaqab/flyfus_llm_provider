@@ -31,6 +31,22 @@ file1: "https://example.com/a.xlsx"
 
 `read_file` 工具接收逗号或换行分隔的 URL，并输出标签内的换行 URL 列表。
 
+## AI Mode
+
+User 或 Tool 消息的任意 `FLYFUS_CONTEXT` 可以包含 AI Mode 引用：
+
+```text
+<FLYFUS_CONTEXT>
+{{dify_admin:ai_mode.listing_analysis.fast}}
+</FLYFUS_CONTEXT>
+```
+
+插件使用最后出现的引用，请求 `POST /dify_admin/ai_mode/resolve_reference`，请求体为
+`{"reference":"{{dify_admin:ai_mode.listing_analysis.fast}}"}`。接口返回的
+模型和生成参数取自 `data.config`，引用在发送给大模型前会被删除。
+即使解析接口失败，纯 AI Mode 的 `FLYFUS_CONTEXT` 也会被删除，并继续使用原模型。
+命中过 AI Mode 的消息在删除引用后，还会清理整条消息首尾的空格和换行。
+
 ## URL 规则
 
 - 图片和文件都只支持公网 `http://`、`https://` URL。

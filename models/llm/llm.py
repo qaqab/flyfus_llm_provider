@@ -25,6 +25,7 @@ from dify_plugin.errors.model import CredentialsValidateFailedError, InvokeError
 from dify_plugin.interfaces.model.openai_compatible.llm import OAICompatLargeLanguageModel
 
 from models.llm.agent_context import inject_context_from_tool_messages
+from models.llm.ai_mode import apply_ai_mode
 from models.llm.geo_prompt import render_geo_prompt_references
 from models.llm.invocation_logging import (
     http_response_summary,
@@ -600,11 +601,13 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
     ) -> Union[LLMResult, Generator]:
         configured_model = model
         route = apply_model_route(model, model_parameters, prompt_messages)
-        model = route.model
-        effective_model_parameters = route.parameters
+        ai_mode = apply_ai_mode(route.model, route.parameters, prompt_messages, credentials)
+        model = ai_mode.model
+        effective_model_parameters = ai_mode.parameters
+        model_route_applied = route.applied or ai_mode.applied
         reasoning_effort = reasoning_effort_from_tool_messages(prompt_messages)
         if reasoning_effort and (
-            not route.applied or "reasoning_effort" in supported_route_parameters(model)
+            not model_route_applied or "reasoning_effort" in supported_route_parameters(model)
         ):
             effective_model_parameters["reasoning_effort"] = reasoning_effort
 
@@ -649,7 +652,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
             model=model,
             configured_model=configured_model,
             routed_model=model,
-            model_route_applied=route.applied,
+            model_route_applied=model_route_applied,
             stream=stream,
             user=user,
             stop=stop,
@@ -662,14 +665,14 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
             "invoke_started",
             configured_model=configured_model,
             routed_model=model,
-            model_route_applied=route.applied,
+            model_route_applied=model_route_applied,
             model_parameters=effective_model_parameters,
             tools_count=len(tools or []),
             stop=stop,
             prompt_metrics=prompt_messages_metrics(prompt_messages),
         )
         route_credentials = dict(credentials)
-        if route.applied:
+        if model_route_applied:
             route_credentials.pop("endpoint_model_name", None)
         normalized_credentials = self._normalize_credentials(model, route_credentials)
         normalized_credentials["_flyfus_invocation_id"] = invocation_log.invocation_id
