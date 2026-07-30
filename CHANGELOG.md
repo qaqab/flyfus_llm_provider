@@ -38,6 +38,7 @@
 ## 0.0.35
 
 - 修复旧凭据缺少 `mode` 时读取模型 schema 失败，导致 Agent 不能选择 Flyfus 模型的问题。
+- `log_context` 新增 `conversation_id`，并与 `log_id` 同级写入 SLS。
 
 ## 0.0.34
 

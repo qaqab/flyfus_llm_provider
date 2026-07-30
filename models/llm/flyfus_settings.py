@@ -19,7 +19,13 @@ _SETTING_PATTERN = re.compile(
 _AI_MODE_REFERENCE_PATTERN = re.compile(
     r"\{\{dify_admin:ai_mode\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+}}"
 )
-_LOG_CONTEXT_FIELDS = ("user_id", "app_id", "workflow_id", "workflow_run_id")
+_LOG_CONTEXT_FIELDS = (
+    "user_id",
+    "app_id",
+    "workflow_id",
+    "workflow_run_id",
+    "conversation_id",
+)
 
 
 @dataclass(frozen=True)
@@ -29,6 +35,7 @@ class FlyfusSettings:
     app_id: str = ""
     workflow_id: str = ""
     workflow_run_id: str = ""
+    conversation_id: str = ""
 
     def log_context(self) -> dict[str, str]:
         return {field: getattr(self, field) for field in _LOG_CONTEXT_FIELDS}

@@ -131,7 +131,8 @@ def test_log_context_is_extracted_from_user_and_missing_fields_are_empty() -> No
         content=(
             "分析这个 Listing\n"
             '<FLYFUS_SETTING>{"type":"log_context","user_id":" user-1 ",'
-            '"workflow_id":"workflow-1","workflow_run_id":"run-1"}</FLYFUS_SETTING>'
+            '"workflow_id":"workflow-1","workflow_run_id":"run-1",'
+            '"conversation_id":"conversation-1"}</FLYFUS_SETTING>'
         )
     )
 
@@ -142,6 +143,7 @@ def test_log_context_is_extracted_from_user_and_missing_fields_are_empty() -> No
         "app_id": "",
         "workflow_id": "workflow-1",
         "workflow_run_id": "run-1",
+        "conversation_id": "conversation-1",
     }
     assert message.content == "分析这个 Listing"
 
@@ -162,6 +164,7 @@ def test_log_context_from_tool_is_removed_but_not_recorded() -> None:
         "app_id": "",
         "workflow_id": "",
         "workflow_run_id": "",
+        "conversation_id": "",
     }
     assert message.content == ""
 
@@ -184,6 +187,7 @@ def test_log_context_from_user_history_is_not_reused() -> None:
         "app_id": "",
         "workflow_id": "",
         "workflow_run_id": "",
+        "conversation_id": "",
     }
     assert messages[0].content == ""
     assert messages[1].content == "new request"

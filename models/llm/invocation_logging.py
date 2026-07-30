@@ -124,7 +124,7 @@ class InvocationLog:
         event = {
             "time": _iso_now(),
             "source": "flyfus_llm_provider",
-            "schema_version": 5,
+            "schema_version": 6,
             "event_type": "llm_invocation",
             "invocation_id": self.invocation_id,
             "client_request_id": self.invocation_id,
@@ -142,6 +142,7 @@ class InvocationLog:
             "app_id": str(self.request.get("app_id") or ""),
             "workflow_id": str(self.request.get("workflow_id") or ""),
             "workflow_run_id": str(self.request.get("workflow_run_id") or ""),
+            "conversation_id": str(self.request.get("conversation_id") or ""),
             "dify_runtime": self.request.get("dify_runtime"),
             "duration_ms": int((time.time() - self.started_at) * 1000),
             "status": (self.result or {}).get("status", "unknown"),

@@ -55,11 +55,11 @@ User 消息使用 `type: "log_context"` 写入调用日志：
 
 ```text
 <FLYFUS_SETTING>
-{"type":"log_context","user_id":"user-1","app_id":"app-1","workflow_id":"workflow-1","workflow_run_id":"run-1"}
+{"type":"log_context","user_id":"user-1","app_id":"app-1","workflow_id":"workflow-1","workflow_run_id":"run-1","conversation_id":"conversation-1"}
 </FLYFUS_SETTING>
 ```
 
-`user_id`、`app_id`、`workflow_id`、`workflow_run_id` 会在 SLS 中与 `log_id`
+`user_id`、`app_id`、`workflow_id`、`workflow_run_id`、`conversation_id` 会在 SLS 中与 `log_id`
 同级记录，并同时写入 `event_json` 顶层。缺少或不是字符串的字段记录为空字符串。
 Tool 消息中的 `log_context` 会被删除，但不会写入日志。
 

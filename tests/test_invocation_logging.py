@@ -17,6 +17,7 @@ def test_invocation_event_exposes_model_route_fields(monkeypatch) -> None:
         user_id="user-1",
         app_id="app-1",
         workflow_id="workflow-1",
+        conversation_id="conversation-1",
     )
     log.success()
 
@@ -30,6 +31,7 @@ def test_invocation_event_exposes_model_route_fields(monkeypatch) -> None:
     assert captured["event"]["app_id"] == "app-1"
     assert captured["event"]["workflow_id"] == "workflow-1"
     assert captured["event"]["workflow_run_id"] == ""
+    assert captured["event"]["conversation_id"] == "conversation-1"
     assert captured["event"]["input"]["configured_model"] == "medium"
 
 
@@ -61,6 +63,7 @@ def test_sls_log_indexes_model_route_fields(monkeypatch) -> None:
         "user_id": "user-1",
         "workflow_id": "workflow-1",
         "workflow_run_id": "run-1",
+        "conversation_id": "conversation-1",
     }
     credentials = {
         "sls_endpoint": "endpoint",
@@ -79,3 +82,4 @@ def test_sls_log_indexes_model_route_fields(monkeypatch) -> None:
     assert captured["contents"]["app_id"] == ""
     assert captured["contents"]["workflow_id"] == "workflow-1"
     assert captured["contents"]["workflow_run_id"] == "run-1"
+    assert captured["contents"]["conversation_id"] == "conversation-1"
