@@ -8,6 +8,7 @@ from dify_plugin.entities.model.message import (
 )
 
 from models.llm.ai_mode import apply_ai_mode
+from models.llm.flyfus_settings import extract_flyfus_settings
 
 
 def _credentials() -> dict:
@@ -17,7 +18,7 @@ def _credentials() -> dict:
     }
 
 
-def test_last_ai_mode_in_multiple_contexts_routes_model_and_keeps_urls(monkeypatch) -> None:
+def test_last_ai_mode_in_multiple_settings_routes_model_and_keeps_context(monkeypatch) -> None:
     response = Mock(status_code=200)
     response.json.return_value = {
         "code": 200,
@@ -41,16 +42,26 @@ def test_last_ai_mode_in_multiple_contexts_routes_model_and_keeps_urls(monkeypat
         UserPromptMessage(
             content=(
                 "<FLYFUS_CONTEXT>image1: https://example.com/a.jpg</FLYFUS_CONTEXT>\n"
-                "<FLYFUS_CONTEXT>{{dify_admin:ai_mode.other.deep}}</FLYFUS_CONTEXT>"
+                '<FLYFUS_SETTING>{"type":"ai_mode","reference":'
+                '"{{dify_admin:ai_mode.other.deep}}"}</FLYFUS_SETTING>'
             )
         ),
         ToolPromptMessage(
             tool_call_id="call-1",
-            content="<FLYFUS_CONTEXT>\n{{dify_admin:ai_mode.listing_analysis.fast}}\n</FLYFUS_CONTEXT>",
+            content=(
+                '<FLYFUS_SETTING>{"type":"ai_mode","reference":'
+                '"{{dify_admin:ai_mode.listing_analysis.fast}}"}</FLYFUS_SETTING>'
+            ),
         ),
     ]
 
-    result = apply_ai_mode("medium", {"temperature": 1}, messages, _credentials())
+    settings = extract_flyfus_settings(messages)
+    result = apply_ai_mode(
+        "medium",
+        {"temperature": 1},
+        settings.ai_mode_reference,
+        _credentials(),
+    )
 
     assert result.applied is True
     assert result.model == "gpt-5.5"
@@ -78,11 +89,18 @@ def test_ai_mode_request_error_falls_back_to_original_model(monkeypatch) -> None
     message = UserPromptMessage(
         content=(
             " \n分析这个 Listing\n\n"
-            "<FLYFUS_CONTEXT>{{dify_admin:ai_mode.listing_analysis.fast}}</FLYFUS_CONTEXT>\n "
+            '<FLYFUS_SETTING>{"type":"ai_mode","reference":'
+            '"{{dify_admin:ai_mode.listing_analysis.fast}}"}</FLYFUS_SETTING>\n '
         ),
     )
 
-    result = apply_ai_mode("medium", {"max_tokens": 1000}, [message], _credentials())
+    settings = extract_flyfus_settings([message])
+    result = apply_ai_mode(
+        "medium",
+        {"max_tokens": 1000},
+        settings.ai_mode_reference,
+        _credentials(),
+    )
 
     assert result.applied is False
     assert result.model == "medium"
@@ -95,10 +113,91 @@ def test_ai_mode_rejects_non_object_response(monkeypatch) -> None:
     response.json.return_value = []
     monkeypatch.setattr("models.llm.ai_mode.requests.post", Mock(return_value=response))
     message = UserPromptMessage(
-        content="<FLYFUS_CONTEXT>{{dify_admin:ai_mode.listing_analysis.fast}}</FLYFUS_CONTEXT>"
+        content=(
+            '<FLYFUS_SETTING>{"type":"ai_mode","reference":'
+            '"{{dify_admin:ai_mode.listing_analysis.fast}}"}</FLYFUS_SETTING>'
+        )
     )
 
-    result = apply_ai_mode("medium", {}, [message], _credentials())
+    settings = extract_flyfus_settings([message])
+    result = apply_ai_mode("medium", {}, settings.ai_mode_reference, _credentials())
 
     assert result.applied is False
     assert message.content == ""
+
+
+def test_log_context_is_extracted_from_user_and_missing_fields_are_empty() -> None:
+    message = UserPromptMessage(
+        content=(
+            "分析这个 Listing\n"
+            '<FLYFUS_SETTING>{"type":"log_context","user_id":" user-1 ",'
+            '"workflow_id":"workflow-1","workflow_run_id":"run-1"}</FLYFUS_SETTING>'
+        )
+    )
+
+    settings = extract_flyfus_settings([message])
+
+    assert settings.log_context() == {
+        "user_id": "user-1",
+        "app_id": "",
+        "workflow_id": "workflow-1",
+        "workflow_run_id": "run-1",
+    }
+    assert message.content == "分析这个 Listing"
+
+
+def test_log_context_from_tool_is_removed_but_not_recorded() -> None:
+    message = ToolPromptMessage(
+        tool_call_id="call-1",
+        content=(
+            '<FLYFUS_SETTING>{"type":"log_context","user_id":"tool-user",'
+            '"app_id":"tool-app"}</FLYFUS_SETTING>'
+        ),
+    )
+
+    settings = extract_flyfus_settings([message])
+
+    assert settings.log_context() == {
+        "user_id": "",
+        "app_id": "",
+        "workflow_id": "",
+        "workflow_run_id": "",
+    }
+    assert message.content == ""
+
+
+def test_log_context_from_user_history_is_not_reused() -> None:
+    messages = [
+        UserPromptMessage(
+            content=(
+                '<FLYFUS_SETTING>{"type":"log_context","user_id":"old-user",'
+                '"workflow_run_id":"old-run"}</FLYFUS_SETTING>'
+            )
+        ),
+        UserPromptMessage(content="new request"),
+    ]
+
+    settings = extract_flyfus_settings(messages)
+
+    assert settings.log_context() == {
+        "user_id": "",
+        "app_id": "",
+        "workflow_id": "",
+        "workflow_run_id": "",
+    }
+    assert messages[0].content == ""
+    assert messages[1].content == "new request"
+
+
+def test_non_json_setting_is_removed_without_legacy_ai_mode_parsing() -> None:
+    message = UserPromptMessage(
+        content=(
+            "request\n"
+            "<FLYFUS_SETTING>{{dify_admin:ai_mode.listing_analysis.fast}}</FLYFUS_SETTING>"
+        )
+    )
+
+    settings = extract_flyfus_settings([message])
+
+    assert settings.ai_mode_reference is None
+    assert message.content == "request"

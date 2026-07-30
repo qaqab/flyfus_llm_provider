@@ -249,7 +249,7 @@ def test_context_regex_ignores_url_without_hostname() -> None:
     assert _extract_context_urls("<FLYFUS_CONTEXT>http:///a.jpg</FLYFUS_CONTEXT>") == []
 
 
-def test_context_tags_are_supported_and_urls_are_deduplicated() -> None:
+def test_context_and_file_tags_are_supported_and_urls_are_deduplicated() -> None:
     first_image_url = "https://example.com/a.jpg"
     second_image_url = "https://example.com/b.png"
     file_url = "https://example.com/report.pdf"
@@ -258,9 +258,9 @@ def test_context_tags_are_supported_and_urls_are_deduplicated() -> None:
             name="read_file",
             tool_call_id="read-file-1",
             content=(
-                f"<FLYFUS_CONTEXT>{first_image_url}</FLYFUS_CONTEXT>"
+                f"<FLYFUS_CONTEXT>{first_image_url} {second_image_url}</FLYFUS_CONTEXT>"
                 f"<FLYFUS_FILE>{file_url}</FLYFUS_FILE>"
-                f"<FLYFUS_COMPONENT>{first_image_url} {second_image_url}</FLYFUS_COMPONENT>"
+                f"<FLYFUS_CONTEXT>{first_image_url}</FLYFUS_CONTEXT>"
             ),
         )
     ]

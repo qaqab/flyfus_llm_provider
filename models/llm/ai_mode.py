@@ -1,31 +1,17 @@
-"""Resolve AI Mode references embedded in Flyfus context blocks."""
-
-import re
+"""Resolve a parsed Flyfus AI Mode reference."""
 
 import requests
 
-from dify_plugin.entities.model.message import (
-    PromptMessage,
-    TextPromptMessageContent,
-    ToolPromptMessage,
-    UserPromptMessage,
-)
-
 from models.llm.model_route import ModelRouteResult
-
-
-_CONTEXT_PATTERN = re.compile(r"<FLYFUS_CONTEXT>(?P<content>.*?)</FLYFUS_CONTEXT>", re.DOTALL)
-_AI_MODE_PATTERN = re.compile(r"\{\{dify_admin:ai_mode\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+}}")
 
 
 def apply_ai_mode(
     model: str,
     model_parameters: dict,
-    prompt_messages: list[PromptMessage],
+    reference: str | None,
     credentials: dict,
 ) -> ModelRouteResult:
-    """Apply the last AI Mode reference found in User or Tool context blocks."""
-    reference = _extract_and_remove_references(prompt_messages)
+    """Resolve and apply a previously parsed AI Mode reference."""
     fallback = ModelRouteResult(model=model, parameters=dict(model_parameters))
     if reference is None:
         return fallback
@@ -59,39 +45,3 @@ def apply_ai_mode(
     ):
         return fallback
     return ModelRouteResult(model=target_model, parameters=target_parameters, applied=True)
-
-
-def _extract_and_remove_references(prompt_messages: list[PromptMessage]) -> str | None:
-    last_reference: str | None = None
-    for message in prompt_messages:
-        if not isinstance(message, (UserPromptMessage, ToolPromptMessage)):
-            continue
-        text_parts = (
-            [message]
-            if isinstance(message.content, str)
-            else [part for part in message.content or [] if isinstance(part, TextPromptMessageContent)]
-        )
-        for part in text_parts:
-            text = part.content if isinstance(part, PromptMessage) else part.data
-            cleaned, references = _clean_text(text)
-            if references:
-                cleaned = cleaned.strip()
-            if isinstance(part, PromptMessage):
-                part.content = cleaned
-            else:
-                part.data = cleaned
-            if references:
-                last_reference = references[-1]
-    return last_reference
-
-
-def _clean_text(text: str) -> tuple[str, list[str]]:
-    references: list[str] = []
-
-    def clean_context(match: re.Match) -> str:
-        content = match.group("content")
-        references.extend(_AI_MODE_PATTERN.findall(content))
-        cleaned_content = _AI_MODE_PATTERN.sub("", content)
-        return f"<FLYFUS_CONTEXT>{cleaned_content}</FLYFUS_CONTEXT>" if cleaned_content.strip() else ""
-
-    return _CONTEXT_PATTERN.sub(clean_context, text), references

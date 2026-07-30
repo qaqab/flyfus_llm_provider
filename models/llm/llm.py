@@ -1,6 +1,5 @@
 import json
 from copy import deepcopy
-import re
 from contextvars import ContextVar
 from contextlib import suppress
 from typing import Generator, Optional, Union
@@ -26,6 +25,7 @@ from dify_plugin.interfaces.model.openai_compatible.llm import OAICompatLargeLan
 
 from models.llm.agent_context import inject_context_from_tool_messages
 from models.llm.ai_mode import apply_ai_mode
+from models.llm.flyfus_settings import extract_flyfus_settings
 from models.llm.geo_prompt import render_geo_prompt_references
 from models.llm.invocation_logging import (
     http_response_summary,
@@ -38,6 +38,7 @@ from models.llm.invocation_logging import (
     upstream_openai_compatible_request_summary,
     wrap_stream_with_invocation_log,
 )
+from models.llm.dify_runtime_context import DIFY_RUNTIME_CONTEXT_KEY
 from models.llm.model_catalog import load_model_extra, load_predefined_chat_models
 from models.llm.model_route import apply_model_route, supported_route_parameters
 from models.llm.parameter_conversion import normalize_generation_parameters, normalize_max_tokens
@@ -601,7 +602,13 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
     ) -> Union[LLMResult, Generator]:
         configured_model = model
         route = apply_model_route(model, model_parameters, prompt_messages)
-        ai_mode = apply_ai_mode(route.model, route.parameters, prompt_messages, credentials)
+        flyfus_settings = extract_flyfus_settings(prompt_messages)
+        ai_mode = apply_ai_mode(
+            route.model,
+            route.parameters,
+            flyfus_settings.ai_mode_reference,
+            credentials,
+        )
         model = ai_mode.model
         effective_model_parameters = ai_mode.parameters
         model_route_applied = route.applied or ai_mode.applied
@@ -660,6 +667,8 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
             prompt_metrics_initial=prompt_messages_metrics(prompt_messages),
             prompt_messages_initial=prompt_messages_summary(prompt_messages),
             tools=tools_summary(tools),
+            dify_runtime=credentials.get(DIFY_RUNTIME_CONTEXT_KEY),
+            **flyfus_settings.log_context(),
         )
         invocation_log.event(
             "invoke_started",
@@ -672,6 +681,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
             prompt_metrics=prompt_messages_metrics(prompt_messages),
         )
         route_credentials = dict(credentials)
+        route_credentials.pop(DIFY_RUNTIME_CONTEXT_KEY, None)
         if model_route_applied:
             route_credentials.pop("endpoint_model_name", None)
         normalized_credentials = self._normalize_credentials(model, route_credentials)

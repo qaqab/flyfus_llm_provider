@@ -17,9 +17,11 @@ file1: "https://example.com/a.xlsx"
 
 字段：
 
-- 支持 `FLYFUS_CONTEXT`、`FLYFUS_FILE`、`FLYFUS_COMPONENT` 三种标签。
-- 每种标签内部都按正则扫描公网 URL，不要求 JSON 或字段名。
-- 标签内部可以是普通文本、JSON、列表或它们的组合。
+- `FLYFUS_CONTEXT` 和 `FLYFUS_FILE` 返回给前端，同时保留在模型内容中。
+- `FLYFUS_INTERNAL_CONTEXT` 预留给不返回前端、但保留在模型内容中的场景；插件暂不从中提取附件。
+- `FLYFUS_SETTING` 不作为模型内容，只用于模型参数和日志字段解析。
+- `FLYFUS_CONTEXT` 和 `FLYFUS_FILE` 内部都按正则扫描公网 URL，不要求 JSON 或字段名。
+- 这两个附件标签内部可以是普通文本、JSON、列表或它们的组合。
 - 图片支持 PNG、JPG、JPEG；文件支持 PDF、MD、XLSX、CSV、TXT、HTML。
 - 同一次模型调用中，相同 URL 只会作为一个附件注入。
 
@@ -33,19 +35,33 @@ file1: "https://example.com/a.xlsx"
 
 ## AI Mode
 
-User 或 Tool 消息的任意 `FLYFUS_CONTEXT` 可以包含 AI Mode 引用：
+User 或 Tool 消息使用 `type: "ai_mode"` 选择 AI Mode：
 
 ```text
-<FLYFUS_CONTEXT>
-{{dify_admin:ai_mode.listing_analysis.fast}}
-</FLYFUS_CONTEXT>
+<FLYFUS_SETTING>
+{"type":"ai_mode","reference":"{{dify_admin:ai_mode.listing_analysis.fast}}"}
+</FLYFUS_SETTING>
 ```
 
 插件使用最后出现的引用，请求 `POST /dify_admin/ai_mode/resolve_reference`，请求体为
 `{"reference":"{{dify_admin:ai_mode.listing_analysis.fast}}"}`。接口返回的
-模型和生成参数取自 `data.config`，引用在发送给大模型前会被删除。
-即使解析接口失败，纯 AI Mode 的 `FLYFUS_CONTEXT` 也会被删除，并继续使用原模型。
-命中过 AI Mode 的消息在删除引用后，还会清理整条消息首尾的空格和换行。
+模型和生成参数取自 `data.config`，整个 `FLYFUS_SETTING` 块在发送给大模型前会被删除。
+即使解析接口失败，`FLYFUS_SETTING` 也会被删除，并继续使用原模型。
+包含 Setting 的消息在删除标签块后，还会清理整条消息首尾的空格和换行。
+
+## 日志上下文
+
+User 消息使用 `type: "log_context"` 写入调用日志：
+
+```text
+<FLYFUS_SETTING>
+{"type":"log_context","user_id":"user-1","app_id":"app-1","workflow_id":"workflow-1","workflow_run_id":"run-1"}
+</FLYFUS_SETTING>
+```
+
+`user_id`、`app_id`、`workflow_id`、`workflow_run_id` 会在 SLS 中与 `log_id`
+同级记录，并同时写入 `event_json` 顶层。缺少或不是字符串的字段记录为空字符串。
+Tool 消息中的 `log_context` 会被删除，但不会写入日志。
 
 ## URL 规则
 

@@ -12,10 +12,13 @@ from dify_plugin.entities.model.message import (
     UserPromptMessage,
 )
 
-# Every supported tag uses the same URL extraction rules. The backreference keeps
-# an opening tag from matching a different closing tag.
+from models.llm.context_tags import FlyfusContextTag
+
+# Public context and file tags use the same URL extraction rules. The backreference
+# keeps an opening tag from matching a different closing tag.
+_ATTACHMENT_TAGS = (FlyfusContextTag.CONTEXT, FlyfusContextTag.FILE)
 _CONTEXT_PATTERN = re.compile(
-    r"<(?P<tag>FLYFUS_CONTEXT|FLYFUS_FILE|FLYFUS_COMPONENT)>(?P<content>.*?)</(?P=tag)>",
+    rf"<(?P<tag>{'|'.join(_ATTACHMENT_TAGS)})>(?P<content>.*?)</(?P=tag)>",
     re.DOTALL,
 )
 _IMAGE_URL_SUFFIXES = (".png", ".jpg", ".jpeg")

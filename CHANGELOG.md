@@ -42,6 +42,10 @@
 ## 0.0.34
 
 - 支持 `set_next_step` 工作流工具返回 `reasoning_effort`，并将其仅用于该工具调用后的下一次模型请求。
+- 将 AI Mode 改为通过 JSON `FLYFUS_SETTING` 解析，并在模型调用前删除整个 Setting 块。
+- 支持从最新 User 消息的 `log_context` Setting 解析 `user_id`、`app_id`、`workflow_id` 和 `workflow_run_id`。
+- 将四个日志字段与 `log_id` 同级写入 SLS；缺失字段记录为空字符串。
+- 调用日志新增 Dify Session 运行时上下文，便于核对消息声明字段与实际工作流字段。
 
 ## 0.0.27
 
