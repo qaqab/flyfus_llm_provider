@@ -637,6 +637,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                     model,
                     raw_usage,
                     user,
+                    flyfus_settings.log_context(),
                     credentials,
                 )
             except Exception as error:

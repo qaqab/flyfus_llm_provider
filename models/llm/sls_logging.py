@@ -27,6 +27,7 @@ def write_invocation_log(credentials: dict[str, Any], event: dict[str, Any]) -> 
     metrics = ((event.get("input") or {}).get("metrics") or {})
     contents = [
         ("log_id", str(event.get("invocation_id") or "")),
+        ("user", str(event.get("user") or "")),
         ("user_id", str(event.get("user_id") or "")),
         ("app_id", str(event.get("app_id") or "")),
         ("workflow_id", str(event.get("workflow_id") or "")),

@@ -60,6 +60,7 @@ def test_sls_log_indexes_model_route_fields(monkeypatch) -> None:
         "configured_model": "medium",
         "routed_model": "gpt-5.6-sol",
         "model_route_applied": True,
+        "user": "dify-user",
         "user_id": "user-1",
         "workflow_id": "workflow-1",
         "workflow_run_id": "run-1",
@@ -78,6 +79,7 @@ def test_sls_log_indexes_model_route_fields(monkeypatch) -> None:
     assert captured["contents"]["configured_model"] == "medium"
     assert captured["contents"]["routed_model"] == "gpt-5.6-sol"
     assert captured["contents"]["model_route_applied"] == "true"
+    assert captured["contents"]["user"] == "dify-user"
     assert captured["contents"]["user_id"] == "user-1"
     assert captured["contents"]["app_id"] == ""
     assert captured["contents"]["workflow_id"] == "workflow-1"

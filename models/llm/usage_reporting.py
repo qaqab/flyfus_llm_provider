@@ -1,10 +1,15 @@
-import re
 from typing import Any, Optional
 
 import requests
 
 
-_USAGE_USER_PATTERN = re.compile(r"^[^:\s]+:(?:web_chat|report_chat):[^:\s]+$")
+_USAGE_CONTEXT_FIELDS = (
+    "user_id",
+    "app_id",
+    "workflow_id",
+    "workflow_run_id",
+    "conversation_id",
+)
 
 
 def normalize_upstream_usage(raw_usage: Optional[dict]) -> dict:
@@ -103,14 +108,15 @@ def report_token_usage(
     model: str,
     raw_usage: Optional[dict],
     user: Optional[str],
+    log_context: dict,
     credentials: dict,
 ) -> bool:
     """Best-effort usage reporting; accounting failures must not fail the LLM call."""
-    normalized_user = user.strip() if isinstance(user, str) else ""
-    if not _USAGE_USER_PATTERN.fullmatch(normalized_user):
-        return False
     payload = to_geo_payload(request_id, model, raw_usage)
-    payload["user"] = normalized_user
+    for field in _USAGE_CONTEXT_FIELDS:
+        value = log_context.get(field)
+        payload[field] = value.strip() if isinstance(value, str) else ""
+    payload["user"] = user.strip() if isinstance(user, str) else ""
     try:
         post_token_usage(payload, credentials)
     except requests.RequestException:

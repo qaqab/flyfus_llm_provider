@@ -39,6 +39,8 @@
 
 - 修复旧凭据缺少 `mode` 时读取模型 schema 失败，导致 Agent 不能选择 Flyfus 模型的问题。
 - `log_context` 新增 `conversation_id`，并与 `log_id` 同级写入 SLS。
+- 将 Dify 模型调用的 `user` 参数与 `log_id` 同级写入 SLS。
+- Token 用量上报新增完整日志上下文字段；所有字段缺失时传空字符串，不再按用户格式过滤。
 
 ## 0.0.34
 

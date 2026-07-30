@@ -61,7 +61,11 @@ User 消息使用 `type: "log_context"` 写入调用日志：
 
 `user_id`、`app_id`、`workflow_id`、`workflow_run_id`、`conversation_id` 会在 SLS 中与 `log_id`
 同级记录，并同时写入 `event_json` 顶层。缺少或不是字符串的字段记录为空字符串。
+模型调用原有的 Dify `user` 参数也会与 `log_id` 同级记录，与 `user_id` 相互独立。
 Tool 消息中的 `log_context` 会被删除，但不会写入日志。
+
+模型调用成功完成后，Token 用量接口还会收到 `user_id`、`app_id`、`workflow_id`、
+`workflow_run_id`、`conversation_id` 和 Dify `user`。这些字段不做格式判断，缺失时传空字符串。
 
 ## URL 规则
 
