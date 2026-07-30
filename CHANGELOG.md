@@ -34,6 +34,7 @@
 ## 0.0.36
 
 - 兼容 Dify Workflow 工具的 `tool name -> result -> output` 三层结果包装。
+- Token 用量上报新增 AI Mode 标识 `mode`，例如 `fast`、`deep`；缺失时传空字符串。
 
 ## 0.0.35
 

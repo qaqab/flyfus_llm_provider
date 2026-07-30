@@ -109,6 +109,7 @@ def report_token_usage(
     raw_usage: Optional[dict],
     user: Optional[str],
     log_context: dict,
+    mode: Optional[str],
     credentials: dict,
 ) -> bool:
     """Best-effort usage reporting; accounting failures must not fail the LLM call."""
@@ -117,6 +118,7 @@ def report_token_usage(
         value = log_context.get(field)
         payload[field] = value.strip() if isinstance(value, str) else ""
     payload["user"] = user.strip() if isinstance(user, str) else ""
+    payload["mode"] = mode.strip() if isinstance(mode, str) else ""
     try:
         post_token_usage(payload, credentials)
     except requests.RequestException:

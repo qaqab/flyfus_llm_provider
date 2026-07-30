@@ -64,6 +64,7 @@ def test_last_ai_mode_in_multiple_settings_routes_model_and_keeps_context(monkey
     )
 
     assert result.applied is True
+    assert settings.ai_mode_name == "fast"
     assert result.model == "gpt-5.5"
     assert result.parameters == {
         "max_tokens": 65536,

@@ -17,7 +17,7 @@ _SETTING_PATTERN = re.compile(
     re.DOTALL,
 )
 _AI_MODE_REFERENCE_PATTERN = re.compile(
-    r"\{\{dify_admin:ai_mode\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+}}"
+    r"\{\{dify_admin:ai_mode\.[A-Za-z0-9_-]+\.(?P<mode>[A-Za-z0-9_-]+)}}"
 )
 _LOG_CONTEXT_FIELDS = (
     "user_id",
@@ -31,6 +31,7 @@ _LOG_CONTEXT_FIELDS = (
 @dataclass(frozen=True)
 class FlyfusSettings:
     ai_mode_reference: str | None = None
+    ai_mode_name: str = ""
     user_id: str = ""
     app_id: str = ""
     workflow_id: str = ""
@@ -44,6 +45,7 @@ class FlyfusSettings:
 def extract_flyfus_settings(prompt_messages: list[PromptMessage]) -> FlyfusSettings:
     """Remove JSON setting blocks and return their model and logging controls."""
     ai_mode_reference: str | None = None
+    ai_mode_name = ""
     log_context = {field: "" for field in _LOG_CONTEXT_FIELDS}
     latest_user_message = next(
         (message for message in reversed(prompt_messages) if isinstance(message, UserPromptMessage)),
@@ -70,12 +72,17 @@ def extract_flyfus_settings(prompt_messages: list[PromptMessage]) -> FlyfusSetti
                 reference = payload.get("reference")
                 if isinstance(reference, str):
                     reference = reference.strip()
-                    if _AI_MODE_REFERENCE_PATTERN.fullmatch(reference):
+                    if match := _AI_MODE_REFERENCE_PATTERN.fullmatch(reference):
                         ai_mode_reference = reference
+                        ai_mode_name = match.group("mode")
             elif setting_type == FlyfusSettingType.LOG_CONTEXT and message is latest_user_message:
                 log_context = _log_context(payload)
 
-    return FlyfusSettings(ai_mode_reference=ai_mode_reference, **log_context)
+    return FlyfusSettings(
+        ai_mode_reference=ai_mode_reference,
+        ai_mode_name=ai_mode_name,
+        **log_context,
+    )
 
 
 def _extract_payloads(text: str) -> tuple[str, list[dict]]:

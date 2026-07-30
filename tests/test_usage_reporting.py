@@ -24,6 +24,7 @@ def test_report_token_usage_posts_all_context_fields_without_user_format_filter(
             "workflow_run_id": "run-1",
             "conversation_id": "conversation-1",
         },
+        "fast",
         {"geo_url": "https://geo.example"},
     )
 
@@ -43,6 +44,7 @@ def test_report_token_usage_posts_all_context_fields_without_user_format_filter(
         "workflow_run_id": "run-1",
         "conversation_id": "conversation-1",
         "user": "550e8400-e29b-41d4-a716-446655440000",
+        "mode": "fast",
     }
 
 
@@ -60,6 +62,7 @@ def test_report_token_usage_posts_empty_values(monkeypatch) -> None:
         None,
         None,
         {},
+        None,
         {},
     )
 
@@ -70,6 +73,7 @@ def test_report_token_usage_posts_empty_values(monkeypatch) -> None:
     assert captured["payload"]["workflow_run_id"] == ""
     assert captured["payload"]["conversation_id"] == ""
     assert captured["payload"]["user"] == ""
+    assert captured["payload"]["mode"] == ""
 
 
 def test_report_token_usage_failure_does_not_fail_model_call(monkeypatch) -> None:
@@ -78,4 +82,4 @@ def test_report_token_usage_failure_does_not_fail_model_call(monkeypatch) -> Non
 
     monkeypatch.setattr(usage_reporting, "post_token_usage", fail_post_token_usage)
 
-    assert usage_reporting.report_token_usage("request-1", "gpt-5.6-sol", None, "user", {}, {}) is False
+    assert usage_reporting.report_token_usage("request-1", "gpt-5.6-sol", None, "user", {}, "deep", {}) is False

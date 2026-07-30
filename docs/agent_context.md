@@ -65,7 +65,8 @@ User 消息使用 `type: "log_context"` 写入调用日志：
 Tool 消息中的 `log_context` 会被删除，但不会写入日志。
 
 模型调用成功完成后，Token 用量接口还会收到 `user_id`、`app_id`、`workflow_id`、
-`workflow_run_id`、`conversation_id` 和 Dify `user`。这些字段不做格式判断，缺失时传空字符串。
+`workflow_run_id`、`conversation_id`、Dify `user` 和 AI Mode 末段的 `mode`（例如 `fast`、
+`deep`）。这些字段不做格式判断，缺失时传空字符串。
 
 ## URL 规则
 
