@@ -640,6 +640,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                     flyfus_settings.log_context(),
                     flyfus_settings.ai_mode_name,
                     credentials,
+                    log_id=invocation_log.invocation_id,
                 )
             except Exception as error:
                 invocation_log.event(

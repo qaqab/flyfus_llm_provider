@@ -26,6 +26,7 @@ def test_report_token_usage_posts_all_context_fields_without_user_format_filter(
         },
         "fast",
         {"geo_url": "https://geo.example"},
+        log_id="log-1",
     )
 
     assert reported is True
@@ -45,6 +46,7 @@ def test_report_token_usage_posts_all_context_fields_without_user_format_filter(
         "conversation_id": "conversation-1",
         "user": "550e8400-e29b-41d4-a716-446655440000",
         "mode": "fast",
+        "log_id": "log-1",
     }
 
 
@@ -74,6 +76,7 @@ def test_report_token_usage_posts_empty_values(monkeypatch) -> None:
     assert captured["payload"]["conversation_id"] == ""
     assert captured["payload"]["user"] == ""
     assert captured["payload"]["mode"] == ""
+    assert captured["payload"]["log_id"] == ""
 
 
 def test_report_token_usage_failure_does_not_fail_model_call(monkeypatch) -> None:
