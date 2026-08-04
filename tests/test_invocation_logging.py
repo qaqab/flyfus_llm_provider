@@ -1,5 +1,42 @@
+import pytest
+
+from dify_plugin.errors.model import InvokeError
+
 from models.llm import invocation_logging, sls_logging
-from models.llm.invocation_logging import InvocationLog
+from models.llm.invocation_logging import InvocationLog, wrap_stream_with_invocation_log
+
+
+def test_stream_failure_is_logged_and_raised_for_dify_retry(monkeypatch) -> None:
+    captured = {}
+    monkeypatch.setattr(
+        invocation_logging,
+        "write_invocation_log",
+        lambda credentials, event: captured.update(event=event),
+    )
+    log = InvocationLog(model="gemini-3.6-flash", credentials={}, stream=True, user="user-1")
+    log.set_request(
+        prompt_metrics_final={
+            "message_count": 3,
+            "total_content_chars": 11623,
+            "role_counts": {"system": 1, "user": 2},
+        }
+    )
+
+    def failing_stream():
+        raise RuntimeError("upstream read timed out")
+        yield
+
+    with pytest.raises(InvokeError) as raised:
+        list(wrap_stream_with_invocation_log(failing_stream(), log))
+
+    message = str(raised.value)
+    assert "[模型调用失败]" in message
+    assert "invocation_id:" in message
+    assert "stream_event_count: 0" in message
+    assert "upstream read timed out" in message
+    assert isinstance(raised.value.__cause__, RuntimeError)
+    assert captured["event"]["status"] == "error"
+    assert captured["event"]["timeline"][-1]["name"] == "stream_error"
 
 
 def test_invocation_event_exposes_model_route_fields(monkeypatch) -> None:

@@ -7,7 +7,7 @@ from urllib.parse import urljoin
 
 import requests
 
-from dify_plugin.entities.model.llm import LLMMode, LLMResult, LLMResultChunk, LLMResultChunkDelta
+from dify_plugin.entities.model.llm import LLMMode, LLMResult
 from dify_plugin.entities.model.message import (
     AssistantPromptMessage,
     AudioPromptMessageContent,
@@ -770,7 +770,6 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                         retry_gemini_stream(),
                         invocation_log,
                         usage_reporter,
-                        self._failure_stream_chunk_factory(model, prompt_messages),
                     )
                 retries = 0
                 while True:
@@ -848,7 +847,6 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                         result,
                         invocation_log,
                         usage_reporter,
-                        self._failure_stream_chunk_factory(model, prompt_messages),
                     )
                 result_summary = llm_result_summary(result)
                 invocation_log.set_response(**result_summary)
@@ -911,7 +909,6 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                     result,
                     invocation_log,
                     usage_reporter,
-                    self._failure_stream_chunk_factory(model, prompt_messages),
                 )
             result_summary = llm_result_summary(result)
             invocation_log.set_response(**result_summary)
@@ -923,28 +920,11 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
             if stream:
                 invocation_log.flush()
             failure_text = failure_output_text(invocation_log, error)
-            if stream:
-                return iter([self._failure_stream_chunk_factory(model, prompt_messages)(failure_text, 0)])
-            return self._failure_result(model, credentials, prompt_messages, failure_text)
+            raise InvokeError(failure_text) from error
         finally:
             _ACTIVE_INVOCATION_LOG.reset(active_log_token)
             if not stream:
                 invocation_log.flush()
-
-    @staticmethod
-    def _failure_stream_chunk_factory(model: str, prompt_messages: list[PromptMessage]):
-        def create_failure_chunk(content: str, index: int) -> LLMResultChunk:
-            return LLMResultChunk(
-                model=model,
-                prompt_messages=prompt_messages,
-                delta=LLMResultChunkDelta(
-                    index=index,
-                    message=AssistantPromptMessage(content=content),
-                    finish_reason="stop",
-                ),
-            )
-
-        return create_failure_chunk
 
     def _build_openai_compatible_replay_body(
         self,
@@ -1001,25 +981,6 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
         if user:
             body["user"] = user
         return body
-
-    def _failure_result(
-        self,
-        model: str,
-        credentials: dict,
-        prompt_messages: list[PromptMessage],
-        content: str,
-    ) -> LLMResult:
-        return LLMResult(
-            model=model,
-            prompt_messages=prompt_messages,
-            message=AssistantPromptMessage(content=content),
-            usage=self._calc_response_usage(
-                model,
-                credentials,
-                self._num_tokens_from_messages(prompt_messages, credentials=credentials),
-                self._num_tokens_from_string(content),
-            ),
-        )
 
     def _handle_generate_response(
         self,

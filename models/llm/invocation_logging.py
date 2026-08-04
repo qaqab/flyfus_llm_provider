@@ -7,6 +7,8 @@ from contextlib import contextmanager, suppress
 from datetime import datetime, timezone
 from typing import Any, Iterator, Optional
 
+from dify_plugin.errors.model import InvokeError
+
 from models.llm.sls_logging import write_invocation_log
 
 
@@ -202,7 +204,7 @@ class InvocationLog:
         write_invocation_log(self.credentials, event)
 
 
-def wrap_stream_with_invocation_log(stream_result, invocation_log: InvocationLog, usage_reporter=None, error_chunk_factory=None):
+def wrap_stream_with_invocation_log(stream_result, invocation_log: InvocationLog, usage_reporter=None):
     chunk_count = 0
     output_parts: list[str] = []
     usage = None
@@ -225,10 +227,7 @@ def wrap_stream_with_invocation_log(stream_result, invocation_log: InvocationLog
             output_text="".join(output_parts),
         )
         invocation_log.event("stream_error", chunk_count=chunk_count, output_text="".join(output_parts))
-        if error_chunk_factory is not None:
-            yield error_chunk_factory(failure_output_text(invocation_log, error), chunk_count)
-            return
-        raise
+        raise InvokeError(failure_output_text(invocation_log, error)) from error
     else:
         output_text = "".join(output_parts)
         invocation_log.set_response(
