@@ -71,6 +71,42 @@ def test_native_gemini_empty_stream_raises_instead_of_returning_stop() -> None:
         )
 
 
+def test_native_gemini_partial_stream_requires_finish_reason() -> None:
+    class Response:
+        def iter_lines(self, decode_unicode=False):
+            assert decode_unicode is False
+            yield b'data: {"candidates":[{"content":{"parts":[{"text":"partial"}]}}]}'
+
+    with pytest.raises(InvokeError, match="未收到 finishReason"):
+        list(
+            _adapter()._handle_stream(
+                model="gemini-3.6-flash",
+                credentials={},
+                response=Response(),
+            )
+        )
+
+
+def test_native_gemini_stream_accepts_stop_finish_reason() -> None:
+    class Response:
+        def iter_lines(self, decode_unicode=False):
+            assert decode_unicode is False
+            yield (
+                b'data: {"candidates":[{"finishReason":"STOP",'
+                b'"content":{"parts":[{"text":"complete"}]}}]}'
+            )
+
+    chunks = list(
+        _adapter()._handle_stream(
+            model="gemini-3.6-flash",
+            credentials={},
+            response=Response(),
+        )
+    )
+
+    assert chunks[-1].delta.finish_reason == "STOP"
+
+
 def test_native_gemini_omits_search_when_disabled() -> None:
     body = _adapter().build_body(
         model="gemini-3.5-flash",

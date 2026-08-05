@@ -468,6 +468,8 @@ class OpenAIResponsesAdapter:
         total_events = 0
         last_event_type = ""
         saw_completed = False
+        terminal_event_type: Optional[str] = None
+        incomplete_details: dict = {}
         yielded_chunks = 0
         response_id = ""
 
@@ -550,6 +552,7 @@ class OpenAIResponsesAdapter:
                             }
                         )
                 elif event_type in {"response.completed", "response.incomplete"}:
+                    terminal_event_type = event_type
                     saw_completed = event_type == "response.completed"
                     response_payload = event.get("response") or {}
                     response_id = response_payload.get("id") or response_id
@@ -662,6 +665,15 @@ class OpenAIResponsesAdapter:
                 stream_last_event_type=last_event_type,
                 yielded_chunks=yielded_chunks,
                 tool_calls_count=len(tool_calls),
+            )
+        if terminal_event_type == "response.incomplete":
+            raise InvokeError(
+                f"OpenAI Responses 返回未完成响应：{incomplete_details or 'unknown reason'}"
+            )
+        if terminal_event_type != "response.completed":
+            raise InvokeError(
+                "OpenAI Responses 流式响应提前结束：未收到 response.completed"
+                f"（last_event={last_event_type or '<none>'}, events={event_counts}）"
             )
         if tool_calls:
             yield LLMResultChunk(

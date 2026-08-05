@@ -478,6 +478,11 @@ class GeminiNativeDocumentAdapter:
                 finish_reason=finish_reason,
                 provider_diagnostics=diagnostics,
             )
+        if finish_reason is None:
+            raise InvokeError(
+                "Gemini 原生接口流式响应提前结束：未收到 finishReason"
+                f"（events={event_count}, invalid_events={invalid_stream_event_count}）"
+            )
         usage = self._build_dify_usage(model, credentials, raw_usage)
         if in_thought:
             chunk_index += 1
