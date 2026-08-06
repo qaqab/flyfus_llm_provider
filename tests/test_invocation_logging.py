@@ -89,8 +89,14 @@ def test_sls_log_indexes_model_route_fields(monkeypatch) -> None:
         def put_logs(self, request):
             captured["request"] = request
 
+    class FakePutLogsRequest:
+        def __init__(self, project, logstore, topic, source, logitems):
+            captured["project"] = project
+            captured["logstore"] = logstore
+
     monkeypatch.setattr(sls_logging, "LogItem", FakeLogItem)
     monkeypatch.setattr(sls_logging, "LogClient", FakeLogClient)
+    monkeypatch.setattr(sls_logging, "PutLogsRequest", FakePutLogsRequest)
     event = {
         "invocation_id": "invocation-1",
         "model": "gpt-5.6-sol",
@@ -106,6 +112,7 @@ def test_sls_log_indexes_model_route_fields(monkeypatch) -> None:
     credentials = {
         "sls_endpoint": "endpoint",
         "sls_project": "project",
+        "sls_logstore": "custom-logstore",
         "sls_access_key_id": "key-id",
         "sls_access_key_secret": "key-secret",
     }
@@ -122,3 +129,43 @@ def test_sls_log_indexes_model_route_fields(monkeypatch) -> None:
     assert captured["contents"]["workflow_id"] == "workflow-1"
     assert captured["contents"]["workflow_run_id"] == "run-1"
     assert captured["contents"]["conversation_id"] == "conversation-1"
+    assert captured["logstore"] == "custom-logstore"
+
+
+def test_sls_logstore_defaults_for_existing_credentials(monkeypatch) -> None:
+    captured = {}
+
+    class FakeLogItem:
+        def set_time(self, value):
+            pass
+
+        def set_contents(self, value):
+            pass
+
+    class FakeLogClient:
+        def __init__(self, *args):
+            pass
+
+        def put_logs(self, request):
+            pass
+
+    class FakePutLogsRequest:
+        def __init__(self, project, logstore, topic, source, logitems):
+            captured["logstore"] = logstore
+
+    monkeypatch.setattr(sls_logging, "LogItem", FakeLogItem)
+    monkeypatch.setattr(sls_logging, "LogClient", FakeLogClient)
+    monkeypatch.setattr(sls_logging, "PutLogsRequest", FakePutLogsRequest)
+
+    sls_logging.write_invocation_log(
+        {
+            "sls_endpoint": "endpoint",
+            "sls_project": "project",
+            "sls_logstore": "   ",
+            "sls_access_key_id": "key-id",
+            "sls_access_key_secret": "key-secret",
+        },
+        {"invocation_id": "invocation-1"},
+    )
+
+    assert captured["logstore"] == "flyfus-dify-llm-log"

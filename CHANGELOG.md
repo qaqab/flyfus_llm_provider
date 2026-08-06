@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.43
+
+- Add the `minimax-m3` chat model with tested sampling, token limit, penalty, structured output, streaming, and tool-call capabilities.
+- Do not expose unreliable MiniMax M3 stop-sequence, JSON object, or thinking controls.
+
 ## 0.0.15
 
 - Normalize boolean `false` schemas before Gemini function calls.

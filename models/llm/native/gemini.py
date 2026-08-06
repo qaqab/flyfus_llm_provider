@@ -362,6 +362,7 @@ class GeminiNativeDocumentAdapter:
         diagnostics = self._provider_diagnostics(payload)
         if invocation_log is not None:
             invocation_log.set_response(
+                response_id=payload.get("responseId") or None,
                 upstream_usage=raw_usage,
                 finish_reason=self._extract_finish_reason(payload),
                 provider_diagnostics=diagnostics,
@@ -382,6 +383,7 @@ class GeminiNativeDocumentAdapter:
         in_thought = False
         pending_tool_calls: list[AssistantPromptMessage.ToolCall] = []
         has_visible_answer_text = False
+        response_id: Optional[str] = None
         event_count = 0
         invalid_stream_event_count = 0
         candidate_count = 0
@@ -431,6 +433,7 @@ class GeminiNativeDocumentAdapter:
                 continue
 
             event_count += 1
+            response_id = event.get("responseId") or response_id
             usage_payload = event.get("usageMetadata") or usage_payload
             finish_reason = self._extract_finish_reason(event) or finish_reason
             event_diagnostics = self._provider_diagnostics(event)
@@ -473,6 +476,7 @@ class GeminiNativeDocumentAdapter:
         }
         if invocation_log is not None:
             invocation_log.set_response(
+                response_id=response_id,
                 upstream_usage=raw_usage,
                 stream_event_count=event_count,
                 finish_reason=finish_reason,

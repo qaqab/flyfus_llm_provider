@@ -1,10 +1,10 @@
-version: 0.0.38
+version: 0.0.44
 type: plugin
 author: "qaqab"
 name: "flyfus_llm_provider"
 description:
-  en_US: Flyfus LLM provider with optional Gemini Official API direct access.
-  zh_Hans: 支持 Gemini 官方直连的 Flyfus 大模型供应商插件。
+  en_US: Flyfus LLM provider for OpenAI-compatible model endpoints.
+  zh_Hans: Flyfus OpenAI 兼容大模型供应商插件。
 label:
   en_US: "Flyfus LLM Provider"
   zh_Hans: "Flyfus 大模型供应商"
@@ -20,7 +20,7 @@ plugins:
   models:
     - "provider/flyfus_llm_provider.yaml"
 meta:
-  version: 0.0.38
+  version: 0.0.44
   arch:
     - "amd64"
     - "arm64"

@@ -54,9 +54,6 @@ _ACTIVE_INVOCATION_LOG: ContextVar[Optional[InvocationLog]] = ContextVar(
     "flyfus_active_invocation_log",
     default=None,
 )
-_GEMINI_OFFICIAL_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta"
-
-
 class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
     """Flyfus LLM 调用适配器。
 
@@ -118,9 +115,6 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
         normalized_credentials.setdefault("function_calling_type", "tool_call")
         normalized_credentials.setdefault("stream_function_calling", "supported")
         normalized_credentials.setdefault("endpoint_model_name", model)
-        if model_family(model) == "gemini" and normalized_credentials.get("gemini_api_key"):
-            normalized_credentials["endpoint_url"] = _GEMINI_OFFICIAL_ENDPOINT
-            normalized_credentials["api_key"] = normalized_credentials.get("gemini_api_key", "")
         return normalized_credentials
 
     def get_model_schema(self, model: str, credentials=None):
@@ -423,27 +417,6 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
         这里自己发一个最小聊天请求，避免保存凭据时因为 token 参数名不兼容而失败。
         """
         normalized_credentials = self._normalize_credentials(model, credentials)
-        if model_family(model) == "gemini" and normalized_credentials.get("gemini_api_key"):
-            request_body = {
-                "contents": [{"parts": [{"text": "ping"}]}],
-                "generationConfig": {"maxOutputTokens": 16},
-            }
-            try:
-                response = requests.post(
-                    self._endpoint_url(normalized_credentials, f"models/{model}:generateContent"),
-                    headers={"Content-Type": "application/json"},
-                    params={"key": normalized_credentials["api_key"]},
-                    json=request_body,
-                    timeout=(10, 300),
-                )
-            except Exception as error:
-                raise CredentialsValidateFailedError(f"Gemini 凭据校验请求失败：{error}") from error
-            if response.status_code != 200:
-                raise CredentialsValidateFailedError(
-                    f"Gemini 凭据校验失败，状态码：{response.status_code}，响应：{response.text}"
-                )
-            return
-
         available_models = self._list_available_models(normalized_credentials)
         predefined_models = load_predefined_chat_models()
         matched_models = predefined_models & available_models

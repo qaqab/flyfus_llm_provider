@@ -2,6 +2,7 @@ import pytest
 
 from models.llm.native.gemini import DEFAULT_THOUGHT_SIGNATURE, GeminiNativeDocumentAdapter
 from models.llm.agent_context import _extract_context_urls, inject_context_from_tool_messages
+from dify_plugin.entities.model.llm import LLMUsage
 from dify_plugin.entities.model.message import AssistantPromptMessage, ToolPromptMessage, UserPromptMessage
 from dify_plugin.errors.model import InvokeError
 
@@ -10,8 +11,64 @@ def _adapter() -> GeminiNativeDocumentAdapter:
     return GeminiNativeDocumentAdapter(
         endpoint_url=lambda _credentials, _path: "https://example.test/",
         normalize_model_parameters=lambda _model, parameters: parameters,
-        calc_response_usage=lambda *_args: None,
+        calc_response_usage=lambda *_args: LLMUsage.empty_usage(),
     )
+
+
+class _InvocationLog:
+    def __init__(self) -> None:
+        self.response = {}
+
+    def set_response(self, **fields) -> None:
+        self.response.update(fields)
+
+
+def test_native_gemini_records_non_stream_response_id() -> None:
+    class Response:
+        def json(self):
+            return {
+                "responseId": "gemini-response-1",
+                "candidates": [
+                    {
+                        "finishReason": "STOP",
+                        "content": {"parts": [{"text": "complete"}]},
+                    }
+                ],
+            }
+
+    invocation_log = _InvocationLog()
+
+    _adapter()._handle_response(
+        model="gemini-3.6-flash",
+        credentials={},
+        response=Response(),
+        invocation_log=invocation_log,
+    )
+
+    assert invocation_log.response["response_id"] == "gemini-response-1"
+
+
+def test_native_gemini_records_stream_response_id() -> None:
+    class Response:
+        def iter_lines(self, decode_unicode=False):
+            assert decode_unicode is False
+            yield (
+                b'data: {"responseId":"gemini-response-2","candidates":[{"finishReason":"STOP",'
+                b'"content":{"parts":[{"text":"complete"}]}}]}'
+            )
+
+    invocation_log = _InvocationLog()
+
+    list(
+        _adapter()._handle_stream(
+            model="gemini-3.6-flash",
+            credentials={},
+            response=Response(),
+            invocation_log=invocation_log,
+        )
+    )
+
+    assert invocation_log.response["response_id"] == "gemini-response-2"
 
 
 def test_native_gemini_uses_rest_google_search_tool() -> None:

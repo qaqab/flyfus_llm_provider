@@ -27,8 +27,7 @@ class FlyfusLLMProvider(ModelProvider):
                 raise CredentialsValidateFailedError(error_message)
         try:
             model_instance = self.get_model_instance(ModelType.LLM)
-            validation_model = "gemini-3.6-flash" if credentials.get("gemini_api_key") else "gpt-5.4"
-            model_instance.validate_credentials(validation_model, dict(credentials))
+            model_instance.validate_credentials("gpt-5.4", dict(credentials))
         except CredentialsValidateFailedError:
             raise
         except Exception as error:
