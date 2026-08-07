@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.45
+
+- Enable tested image input support for `minimax-m3` without advertising unsupported document attachments.
+
 ## 0.0.43
 
 - Add the `minimax-m3` chat model with tested sampling, token limit, penalty, structured output, streaming, and tool-call capabilities.

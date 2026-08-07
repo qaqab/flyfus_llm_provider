@@ -26,7 +26,14 @@ def test_minimax_m3_exposes_only_verified_parameters() -> None:
     rules = {rule["name"]: rule for rule in model["parameter_rules"]}
 
     assert schema.model == "minimax-m3"
-    assert model["features"] == ["agent-thought", "tool-call", "multi-tool-call", "stream-tool-call"]
+    assert model["features"] == [
+        "agent-thought",
+        "tool-call",
+        "multi-tool-call",
+        "stream-tool-call",
+        "vision",
+    ]
+    assert "document" not in model["features"]
     assert set(rules) == {
         "temperature",
         "top_p",
