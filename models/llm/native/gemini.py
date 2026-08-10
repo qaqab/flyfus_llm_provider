@@ -1,4 +1,5 @@
 import json
+import time
 from base64 import b64encode
 from contextlib import suppress
 from typing import Any, Callable, Generator, Optional, Union
@@ -18,6 +19,13 @@ from dify_plugin.entities.model.message import (
 )
 from dify_plugin.errors.model import InvokeError
 
+from models.llm.errors import (
+    GeminiSafetyBlockedError,
+    GeminiStreamIncompleteError,
+    http_error,
+    request_error,
+    retry_delay_seconds,
+)
 from models.llm.invocation_logging import http_response_summary
 from models.llm.parameter_conversion import build_web_search_tool
 
@@ -65,26 +73,63 @@ class GeminiNativeDocumentAdapter:
         if stream:
             params["alt"] = "sse"
 
-        try:
-            response = requests.post(
-                request_url,
-                headers={"Content-Type": "application/json"},
-                params=params,
-                json=request_body,
-                stream=stream,
-                timeout=(10, 120) if stream else (10, 300),
-            )
-        except Exception as error:
-            raise InvokeError(f"Gemini 原生请求失败：{error}") from error
+        for attempt in range(2):
+            try:
+                response = requests.post(
+                    request_url,
+                    headers={"Content-Type": "application/json"},
+                    params=params,
+                    json=request_body,
+                    stream=stream,
+                    timeout=(10, 120) if stream else (10, 300),
+                )
+            except requests.RequestException as raw_error:
+                error = request_error("Gemini 原生接口", raw_error)
+                if attempt == 0 and error.flyfus_internal_retryable:
+                    if invocation_log is not None:
+                        invocation_log.event(
+                            "request_retry",
+                            adapter="gemini_native",
+                            reason=error.flyfus_error_type,
+                            retry=1,
+                            max_retries=1,
+                        )
+                    continue
+                error.flyfus_internal_retryable = False
+                raise error from raw_error
+            except Exception as error:
+                raise InvokeError(f"Gemini 原生请求失败：{error}") from error
 
-        if invocation_log is not None:
-            invocation_log.set_response(
-                http=http_response_summary(response),
-                provider_request_id=self._provider_request_id(response.headers) or None,
-            )
+            if invocation_log is not None:
+                invocation_log.set_response(
+                    http=http_response_summary(response),
+                    provider_request_id=self._provider_request_id(response.headers) or None,
+                )
+            if response.status_code < 400:
+                if invocation_log is not None:
+                    invocation_log.response.pop("error_body", None)
+                break
 
-        if response.status_code >= 400:
-            raise InvokeError(f"Gemini 原生请求失败，状态码：{response.status_code}，响应：{response.text}")
+            error = http_error("Gemini 原生接口", response.status_code, response.text)
+            if invocation_log is not None:
+                invocation_log.set_response(error_body=response.text[:2000])
+            if attempt == 0 and error.flyfus_internal_retryable:
+                if invocation_log is not None:
+                    invocation_log.event(
+                        "request_retry",
+                        adapter="gemini_native",
+                        reason=error.flyfus_error_type,
+                        retry=1,
+                        max_retries=1,
+                    )
+                with suppress(Exception):
+                    response.close()
+                delay_seconds = retry_delay_seconds(response.status_code, response.headers)
+                if delay_seconds:
+                    time.sleep(delay_seconds)
+                continue
+            error.flyfus_internal_retryable = False
+            raise error
 
         if stream:
             return self._handle_stream(model, credentials, response, invocation_log)
@@ -403,7 +448,13 @@ class GeminiNativeDocumentAdapter:
             if len(empty_event_tail) > 6:
                 empty_event_tail.pop(0)
 
-        for raw_line in response.iter_lines(decode_unicode=False):
+        def response_lines():
+            try:
+                yield from response.iter_lines(decode_unicode=False)
+            except requests.RequestException as raw_error:
+                raise request_error("Gemini 原生接口流", raw_error) from raw_error
+
+        for raw_line in response_lines():
             if not raw_line:
                 continue
             line = raw_line.decode("utf-8", errors="replace").strip()
@@ -483,7 +534,12 @@ class GeminiNativeDocumentAdapter:
                 provider_diagnostics=diagnostics,
             )
         if finish_reason is None:
-            raise InvokeError(
+            if (prompt_feedback or {}).get("blockReason"):
+                raise GeminiSafetyBlockedError(
+                    "Gemini 原生接口因安全策略未返回内容"
+                    f"（prompt_block_reason={prompt_feedback.get('blockReason')}）"
+                )
+            raise GeminiStreamIncompleteError(
                 "Gemini 原生接口流式响应提前结束：未收到 finishReason"
                 f"（events={event_count}, invalid_events={invalid_stream_event_count}）"
             )
@@ -670,6 +726,12 @@ class GeminiNativeDocumentAdapter:
             invocation_log.set_response(error_body=error_body)
 
         prompt_feedback = diagnostics.get("prompt_feedback") or {}
+        finish_reasons = diagnostics.get("finish_reasons") or []
+        if prompt_feedback.get("blockReason") or "SAFETY" in finish_reasons:
+            raise GeminiSafetyBlockedError(
+                "Gemini 原生接口因安全策略未返回内容"
+                f"（finish_reasons={finish_reasons}, prompt_block_reason={prompt_feedback.get('blockReason')}）"
+            )
         details = [
             f"candidate_count={diagnostics.get('candidate_count', 0)}",
             f"finish_reasons={diagnostics.get('finish_reasons') or []}",

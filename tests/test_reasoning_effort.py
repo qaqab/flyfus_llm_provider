@@ -1,6 +1,12 @@
 import pytest
 
-from models.llm.llm import FlyfusLargeLanguageModel
+from models.llm.errors import GeminiStreamIncompleteError
+from models.llm.llm import (
+    FlyfusLargeLanguageModel,
+    _GEMINI_MAX_RETRIES,
+    _GeminiPartialOutputError,
+    _GeminiRetryExhaustedError,
+)
 from models.llm.native.gemini import GeminiNativeDocumentAdapter
 from dify_plugin.entities.model.message import UserPromptMessage
 from dify_plugin.errors.model import InvokeError
@@ -52,3 +58,44 @@ def test_gemini_retry_reason_covers_empty_and_malformed_responses() -> None:
         == "malformed_function_call"
     )
     assert FlyfusLargeLanguageModel._gemini_retry_reason(InvokeError("Gemini 请求超时")) is None
+    assert (
+        FlyfusLargeLanguageModel._gemini_retry_reason(
+            GeminiStreamIncompleteError("未收到 finishReason")
+        )
+        == "stream_incomplete"
+    )
+    assert FlyfusLargeLanguageModel._gemini_max_retries("stream_incomplete") == 1
+
+
+def test_gemini_retry_exhausted_errors_keep_distinct_root_cause_types() -> None:
+    empty_response = _GeminiRetryExhaustedError(
+        "empty_response",
+        _GEMINI_MAX_RETRIES,
+        InvokeError("Gemini 原生接口返回空响应"),
+    )
+    malformed_function_call = _GeminiRetryExhaustedError(
+        "malformed_function_call",
+        _GEMINI_MAX_RETRIES,
+        InvokeError("finishReason=MALFORMED_FUNCTION_CALL"),
+    )
+
+    assert empty_response.flyfus_error_type == "gemini_empty_response"
+    assert empty_response.flyfus_retryable is False
+    assert "未返回有效内容" in empty_response.flyfus_user_message
+    assert "已重试 2 次" in str(empty_response)
+    assert "reason=empty_response" in str(empty_response)
+
+    assert malformed_function_call.flyfus_error_type == "gemini_malformed_function_call"
+    assert malformed_function_call.flyfus_retryable is False
+    assert "模型执行任务时发生异常" in malformed_function_call.flyfus_user_message
+    assert "已重试 2 次" in str(malformed_function_call)
+    assert "reason=malformed_function_call" in str(malformed_function_call)
+
+
+def test_gemini_partial_output_error_is_distinct_and_not_retryable() -> None:
+    error = _GeminiPartialOutputError(InvokeError("Gemini 原生接口流式响应提前结束"))
+
+    assert error.flyfus_error_type == "gemini_partial_output_error"
+    assert error.flyfus_retryable is False
+    assert "本次回答不完整" in error.flyfus_user_message
+    assert "已停止自动重试" in str(error)

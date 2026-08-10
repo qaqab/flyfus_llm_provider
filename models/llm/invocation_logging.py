@@ -243,37 +243,52 @@ def wrap_stream_with_invocation_log(stream_result, invocation_log: InvocationLog
 
 
 def failure_output_text(invocation_log: InvocationLog, error: BaseException) -> str:
-    """Build a user-visible failure report without exposing provider credentials."""
+    """Return a stable machine-readable error while full diagnostics remain in SLS."""
     metrics = invocation_log.request.get("prompt_metrics_final") or invocation_log.request.get("prompt_metrics_initial") or {}
     response = invocation_log.response
     upstream_headers = _nested_get(response, "http", "headers") or {}
+    partial_output_characters = len(str(response.get("output_text") or ""))
     raw_error = response.get("error") or response.get("error_body")
     if raw_error is None:
         raw_error = repr(error.__cause__ or error)
     if isinstance(raw_error, (dict, list)):
         raw_error = json.dumps(raw_error, ensure_ascii=False, default=str)
-
-    lines = [
-        "[模型调用失败]",
-        "provider: qaqab/flyfus_llm_provider/flyfus_llm_provider",
-        f"model: {invocation_log.model}",
-        f"stream: {str(invocation_log.stream).lower()}",
-        f"user: {invocation_log.user or '<empty>'}",
-        f"input_message_count: {metrics.get('message_count', 0)} messages",
-        f"input_content_characters: {metrics.get('total_content_chars', 0)} Unicode characters (not tokens)",
-        f"input_roles: {json.dumps(metrics.get('role_counts') or {}, ensure_ascii=False)}",
-        f"invocation_id: {invocation_log.invocation_id}",
-        f"upstream_request_id: {upstream_headers.get('x-request-id') or upstream_headers.get('openai-request-id') or '<none>'}",
-        f"upstream_client_request_id: {upstream_headers.get('x-client-request-id') or '<none>'}",
-        f"upstream_cf_ray: {upstream_headers.get('cf-ray') or '<none>'}",
-        f"stream_event_count: {response.get('stream_event_count', 0)}",
-        f"stream_last_event: {response.get('stream_last_event_type') or '<none>'}",
-        f"partial_output_characters: {len(str(response.get('output_text') or ''))}",
-        f"error_type: {type(error).__name__}",
-        f"error: {error}",
-        f"raw_error: {raw_error}",
-    ]
-    return "\n".join(lines)
+    error_details = "\n".join(
+        [
+            "[模型调用失败]",
+            "provider: qaqab/flyfus_llm_provider/flyfus_llm_provider",
+            f"model: {invocation_log.model}",
+            f"stream: {str(invocation_log.stream).lower()}",
+            f"input_message_count: {metrics.get('message_count', 0)} messages",
+            f"input_content_characters: {metrics.get('total_content_chars', 0)} Unicode characters (not tokens)",
+            f"input_roles: {json.dumps(metrics.get('role_counts') or {}, ensure_ascii=False)}",
+            f"stream_event_count: {response.get('stream_event_count') or 0}",
+            f"stream_event_counts: {json.dumps(response.get('stream_event_counts') or {}, ensure_ascii=False)}",
+            f"stream_last_event: {response.get('stream_last_event_type') or '<none>'}",
+            f"retry_count: {sum(event.get('name') in {'request_retry', 'stream_retry', 'gemini_retry', 'context_guard_retry'} for event in invocation_log.events)}",
+            f"partial_output_characters: {partial_output_characters}",
+            f"error_type: {type(error).__name__}",
+            f"error: {error}",
+            f"raw_error: {raw_error}",
+        ]
+    )
+    payload = {
+        "type": getattr(error, "flyfus_error_type", "model_error"),
+        "user_message": getattr(error, "flyfus_user_message", "模型服务暂时不可用，请稍后重试。"),
+        "retryable": bool(getattr(error, "flyfus_retryable", False)),
+        "partial_output": partial_output_characters > 0,
+        "log_id": invocation_log.invocation_id,
+        "response_id": response.get("response_id"),
+        "request_id": (
+            upstream_headers.get("x-request-id")
+            or upstream_headers.get("openai-request-id")
+            or response.get("provider_request_id")
+        ),
+        "client_request_id": upstream_headers.get("x-client-request-id"),
+        "cf_ray": upstream_headers.get("cf-ray"),
+        "error": error_details,
+    }
+    return f"<FLYFUS_ERROR>{json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}</FLYFUS_ERROR>"
 
 
 def llm_result_summary(result: Any) -> dict:

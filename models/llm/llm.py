@@ -26,8 +26,8 @@ from dify_plugin.interfaces.model.openai_compatible.llm import OAICompatLargeLan
 from models.llm.agent_context import inject_context_from_tool_messages
 from models.llm.ai_mode import apply_ai_mode
 from models.llm.context_guard import (
-    ContextGuardError,
     ContextGuardResult,
+    ContextWindowExceededError,
     guard_prompt_messages,
     is_context_window_error,
 )
@@ -45,6 +45,7 @@ from models.llm.invocation_logging import (
     wrap_stream_with_invocation_log,
 )
 from models.llm.dify_runtime_context import DIFY_RUNTIME_CONTEXT_KEY
+from models.llm.errors import FlyfusInvokeError, GeminiStreamIncompleteError
 from models.llm.model_catalog import load_model_configs, load_model_extra, load_predefined_chat_models
 from models.llm.model_route import apply_model_route, supported_route_parameters
 from models.llm.parameter_conversion import normalize_generation_parameters, normalize_max_tokens
@@ -60,6 +61,49 @@ _ACTIVE_INVOCATION_LOG: ContextVar[Optional[InvocationLog]] = ContextVar(
     "flyfus_active_invocation_log",
     default=None,
 )
+_GEMINI_MAX_RETRIES = 2
+
+
+class _GeminiPartialOutputError(FlyfusInvokeError):
+    flyfus_error_type = "gemini_partial_output_error"
+    flyfus_user_message = "模型响应在输出过程中发生异常，本次回答不完整，请重新发送。"
+    flyfus_retryable = False
+
+    def __init__(self, last_error: BaseException) -> None:
+        super().__init__(f"Gemini 已输出部分内容后发生异常，已停止自动重试：{last_error}")
+
+
+class _GeminiRetryExhaustedError(FlyfusInvokeError):
+    flyfus_retryable = False
+
+    def __init__(self, reason: str, retries: int, last_error: BaseException) -> None:
+        metadata = {
+            "empty_response": (
+                "gemini_empty_response",
+                "模型未返回有效内容，重试后仍未完成，请稍后重试。",
+            ),
+            "malformed_function_call": (
+                "gemini_malformed_function_call",
+                "模型执行任务时发生异常，重试后仍未恢复，请稍后重新发送。",
+            ),
+            "stream_incomplete": (
+                "gemini_stream_incomplete",
+                "模型响应中断，重试后仍未完成，请稍后重试。",
+            ),
+        }.get(reason)
+        if metadata is None:
+            self.flyfus_error_type = getattr(last_error, "flyfus_error_type", "model_error")
+            self.flyfus_user_message = getattr(
+                last_error,
+                "flyfus_user_message",
+                "模型服务暂时不可用，请稍后重试。",
+            )
+            self.flyfus_retryable = bool(getattr(last_error, "flyfus_retryable", False))
+        else:
+            self.flyfus_error_type, self.flyfus_user_message = metadata
+        super().__init__(f"Gemini 响应异常，已重试 {retries} 次仍失败（reason={reason}）：{last_error}")
+
+
 class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
     """Flyfus LLM 调用适配器。
 
@@ -545,12 +589,20 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
 
     @staticmethod
     def _gemini_retry_reason(error: InvokeError) -> Optional[str]:
+        if isinstance(error, GeminiStreamIncompleteError):
+            return "stream_incomplete"
+        if getattr(error, "flyfus_internal_retryable", False):
+            return str(getattr(error, "flyfus_error_type", "upstream_connection_error"))
         message = str(error)
         if "MALFORMED_FUNCTION_CALL" in message:
             return "malformed_function_call"
         if "Gemini 原生接口返回空响应" in message:
             return "empty_response"
         return None
+
+    @staticmethod
+    def _gemini_max_retries(reason: str) -> int:
+        return 1 if reason not in {"empty_response", "malformed_function_call"} else _GEMINI_MAX_RETRIES
 
     def _build_dify_usage(self, model: str, credentials: dict, raw_usage: dict):
         """Build Dify's fixed usage object from the upstream usage source of truth."""
@@ -768,8 +820,12 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
 
             def recover_from_context_error(error: BaseException) -> bool:
                 nonlocal context_retry_used
-                if context_retry_used or not is_context_window_error(error):
+                if not is_context_window_error(error):
                     return False
+                if context_retry_used:
+                    raise ContextWindowExceededError(
+                        "CONTEXT_WINDOW_EXCEEDED: emergency context retry also exceeded the model limit"
+                    ) from error
                 emergency_result = self._guard_prompt_context(
                     model=model,
                     credentials=normalized_credentials,
@@ -780,7 +836,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                     required_user_message=required_user_message,
                 )
                 if emergency_result is None or not emergency_result.trimmed:
-                    raise ContextGuardError(
+                    raise ContextWindowExceededError(
                         "CONTEXT_WINDOW_EXCEEDED: no optional context block remains "
                         "for a safe retry"
                     ) from error
@@ -855,16 +911,22 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                             except InvokeError as error:
                                 if not yielded and recover_from_context_error(error):
                                     continue
+                                if yielded:
+                                    raise _GeminiPartialOutputError(error) from error
                                 reason = self._gemini_retry_reason(error)
-                                if reason is None or retries >= 10:
+                                if reason is None:
                                     raise
+                                max_retries = self._gemini_max_retries(reason)
+                                if retries >= max_retries:
+                                    raise _GeminiRetryExhaustedError(reason, retries, error) from error
                                 retries += 1
                                 invocation_log.response.pop("error_body", None)
+                                invocation_log.set_response(response_id=None, provider_request_id=None)
                                 invocation_log.event(
                                     "gemini_retry",
                                     reason=reason,
                                     retry=retries,
-                                    max_retries=10,
+                                    max_retries=max_retries,
                                 )
 
                     return wrap_stream_with_invocation_log(
@@ -881,15 +943,19 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                         if recover_from_context_error(error):
                             continue
                         reason = self._gemini_retry_reason(error)
-                        if reason is None or retries >= 10:
+                        if reason is None:
                             raise
+                        max_retries = self._gemini_max_retries(reason)
+                        if retries >= max_retries:
+                            raise _GeminiRetryExhaustedError(reason, retries, error) from error
                         retries += 1
                         invocation_log.response.pop("error_body", None)
+                        invocation_log.set_response(response_id=None, provider_request_id=None)
                         invocation_log.event(
                             "gemini_retry",
                             reason=reason,
                             retry=retries,
-                            max_retries=10,
+                            max_retries=max_retries,
                         )
                 result_summary = llm_result_summary(result)
                 invocation_log.set_response(**result_summary)

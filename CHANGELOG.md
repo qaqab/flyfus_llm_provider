@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.0.48
+
+- Retry an OpenAI Responses stream once when it ends before `response.completed` and no response chunk has reached Dify.
+- Do not retry after visible output, preventing duplicated or divergent partial answers.
+- Capture `response_id` from `response.created` so interrupted streams remain traceable.
+- Return Dify errors as a flat `<FLYFUS_ERROR>` JSON envelope with classification, user message, retry hint, tracking IDs, and the complete safe diagnostic text in one `error` field; keep traceback and replay data in SLS.
+- Preserve distinct root-cause types after Gemini retries are exhausted: `gemini_empty_response` and `gemini_malformed_function_call`.
+- Limit Gemini empty-response and malformed-function-call recovery to two retries, stop retrying after any streamed output, and classify that partial-output failure as `gemini_partial_output_error`.
+- Count Responses, Gemini, and context-guard model retries in the error envelope's diagnostic `retry_count`.
+- Classify request timeouts, connection failures, HTTP 429/5xx, authentication failures, bad requests, explicit Responses incomplete/failed events, Gemini missing `finishReason`, Gemini Safety blocks, context overflow, and invalid tool-message history.
+- Retry transient request failures once, retry Gemini streams missing `finishReason` once before output, and preserve the original root-cause type after retries are exhausted.
+- Document the complete `<FLYFUS_ERROR>` field contract and retry matrix without adding a protocol-version field.
+
 ## 0.0.45
 
 - Enable tested image input support for `minimax-m3` without advertising unsupported document attachments.

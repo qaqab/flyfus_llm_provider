@@ -1,9 +1,20 @@
+import json
+
 import pytest
 
 from dify_plugin.errors.model import InvokeError
 
 from models.llm import invocation_logging, sls_logging
 from models.llm.invocation_logging import InvocationLog, wrap_stream_with_invocation_log
+from models.llm.native.openai_responses import _RetryableStreamError
+
+
+def _error_payload(message: str) -> dict:
+    prefix = "<FLYFUS_ERROR>"
+    suffix = "</FLYFUS_ERROR>"
+    assert message.startswith(prefix)
+    assert message.endswith(suffix)
+    return json.loads(message[len(prefix) : -len(suffix)])
 
 
 def test_stream_failure_is_logged_and_raised_for_dify_retry(monkeypatch) -> None:
@@ -30,13 +41,72 @@ def test_stream_failure_is_logged_and_raised_for_dify_retry(monkeypatch) -> None
         list(wrap_stream_with_invocation_log(failing_stream(), log))
 
     message = str(raised.value)
-    assert "[模型调用失败]" in message
-    assert "invocation_id:" in message
-    assert "stream_event_count: 0" in message
-    assert "upstream read timed out" in message
+    payload = _error_payload(message)
+    error_details = payload.pop("error")
+    assert payload == {
+        "type": "model_error",
+        "user_message": "模型服务暂时不可用，请稍后重试。",
+        "retryable": False,
+        "partial_output": False,
+        "log_id": log.invocation_id,
+        "response_id": None,
+        "request_id": None,
+        "client_request_id": None,
+        "cf_ray": None,
+    }
+    assert "model: gemini-3.6-flash" in error_details
+    assert "error_type: RuntimeError" in error_details
+    assert "error: upstream read timed out" in error_details
     assert isinstance(raised.value.__cause__, RuntimeError)
     assert captured["event"]["status"] == "error"
     assert captured["event"]["timeline"][-1]["name"] == "stream_error"
+
+
+def test_recognized_stream_failure_uses_specific_flyfus_error_type(monkeypatch) -> None:
+    monkeypatch.setattr(invocation_logging, "write_invocation_log", lambda *_args: None)
+    log = InvocationLog(model="gpt-5.6-sol", credentials={}, stream=True, user="user-1")
+    log.set_response(
+        response_id="resp_123",
+        http={
+            "headers": {
+                "x-request-id": "request-123",
+                "x-client-request-id": "client-request-123",
+                "cf-ray": "ray-123",
+            }
+        },
+        stream_event_count=44,
+        stream_event_counts={"response.created": 1, "unknown": 1},
+        stream_last_event_type="unknown",
+    )
+    log.event("stream_retry", attempt=1)
+    log.event("gemini_retry", retry=1)
+    log.event("request_retry", retry=1)
+
+    def failing_stream():
+        raise _RetryableStreamError("missing response.completed")
+        yield
+
+    with pytest.raises(InvokeError) as raised:
+        list(wrap_stream_with_invocation_log(failing_stream(), log))
+
+    payload = _error_payload(str(raised.value))
+    error_details = payload.pop("error")
+    assert payload == {
+        "type": "upstream_stream_incomplete",
+        "user_message": "模型响应中断，请稍后重试。",
+        "retryable": True,
+        "partial_output": False,
+        "log_id": log.invocation_id,
+        "response_id": "resp_123",
+        "request_id": "request-123",
+        "client_request_id": "client-request-123",
+        "cf_ray": "ray-123",
+    }
+    assert "stream_event_count: 44" in error_details
+    assert 'stream_event_counts: {"response.created": 1, "unknown": 1}' in error_details
+    assert "retry_count: 3" in error_details
+    assert "error_type: _RetryableStreamError" in error_details
+    assert "error: missing response.completed" in error_details
 
 
 def test_invocation_event_exposes_model_route_fields(monkeypatch) -> None:

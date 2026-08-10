@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from contextlib import suppress
 from typing import Any, Callable, Generator, Optional, Union
 
@@ -21,8 +22,23 @@ from dify_plugin.entities.model.message import (
 from dify_plugin.errors.model import InvokeError
 
 from models.llm.invocation_logging import http_response_summary, responses_payload_summary
+from models.llm.errors import (
+    FlyfusInvokeError,
+    UpstreamResponseIncompleteError,
+    http_error,
+    request_error,
+    response_failed_error,
+    retry_delay_seconds,
+)
 from models.llm.native.base import file_bytes
 from models.llm.parameter_conversion import build_web_search_tool
+
+
+class _RetryableStreamError(FlyfusInvokeError):
+    flyfus_error_type = "upstream_stream_incomplete"
+    flyfus_user_message = "模型响应中断，请稍后重试。"
+    flyfus_retryable = True
+    flyfus_internal_retryable = True
 
 
 def _debug(message: str, *args: object) -> None:
@@ -90,52 +106,113 @@ class OpenAIResponsesAdapter:
         self._log_request_summary(model, stream, prompt_messages, model_parameters, tools, request_body)
         self._log_request_body(invocation_log, request_body)
 
-        try:
-            response = requests.post(
-                self._endpoint_url(credentials, "responses"),
-                headers=self._request_headers(credentials),
-                json=request_body,
-                stream=stream,
-                timeout=(10, 120) if stream else (10, 300),
-            )
-        except Exception as error:
-            _debug(
-                "[flyfus responses] request_failed model=%s stream=%s error_type=%s error=%s",
-                model,
-                stream,
-                type(error).__name__,
-                error,
-            )
-            raise InvokeError(f"OpenAI Responses 请求失败：{error}") from error
-
-        request_id = response.headers.get("x-request-id") or response.headers.get("openai-request-id") or ""
-        if invocation_log is not None:
-            invocation_log.set_response(
-                http=http_response_summary(response),
-                provider_request_id=request_id or None,
-            )
-        _debug(
-            "[flyfus responses] response_headers model=%s stream=%s status=%s request_id=%s content_type=%s",
-            model,
-            stream,
-            response.status_code,
-            request_id,
-            response.headers.get("content-type", ""),
+        response = self._open_response(
+            model=model,
+            credentials=credentials,
+            request_body=request_body,
+            stream=stream,
+            invocation_log=invocation_log,
         )
-        if response.status_code >= 400:
-            if invocation_log is not None:
-                invocation_log.set_response(error_body=response.text[:2000])
-            _debug(
-                "[flyfus responses] response_error model=%s status=%s body_head=%s",
-                model,
-                response.status_code,
-                response.text[:1000],
-            )
-            raise InvokeError(f"OpenAI Responses 请求失败，状态码：{response.status_code}，响应：{response.text}")
 
         if stream:
-            return self._handle_stream(model, credentials, response, prompt_messages, invocation_log=invocation_log)
-        return self._handle_response(model, credentials, response, prompt_messages, invocation_log=invocation_log)
+            return self._handle_stream_with_retry(
+                model=model,
+                credentials=credentials,
+                initial_response=response,
+                request_body=request_body,
+                prompt_messages=prompt_messages,
+                invocation_log=invocation_log,
+            )
+        return self._handle_response_with_retry(
+            model=model,
+            credentials=credentials,
+            initial_response=response,
+            request_body=request_body,
+            prompt_messages=prompt_messages,
+            invocation_log=invocation_log,
+        )
+
+    def _open_response(
+        self,
+        *,
+        model: str,
+        credentials: dict,
+        request_body: dict,
+        stream: bool,
+        invocation_log=None,
+    ) -> requests.Response:
+        for attempt in range(2):
+            try:
+                response = requests.post(
+                    self._endpoint_url(credentials, "responses"),
+                    headers=self._request_headers(credentials),
+                    json=request_body,
+                    stream=stream,
+                    timeout=(10, 120) if stream else (10, 300),
+                )
+            except requests.RequestException as raw_error:
+                error = request_error("OpenAI Responses", raw_error)
+                if attempt == 0 and error.flyfus_internal_retryable:
+                    if invocation_log is not None:
+                        invocation_log.event(
+                            "request_retry",
+                            adapter="openai_responses",
+                            reason=error.flyfus_error_type,
+                            retry=1,
+                            max_retries=1,
+                        )
+                    continue
+                raise error from raw_error
+            except Exception as error:
+                _debug(
+                    "[flyfus responses] request_failed model=%s stream=%s error_type=%s error=%s",
+                    model,
+                    stream,
+                    type(error).__name__,
+                    error,
+                )
+                raise InvokeError(f"OpenAI Responses 请求失败：{error}") from error
+
+            request_id = response.headers.get("x-request-id") or response.headers.get("openai-request-id") or ""
+            if invocation_log is not None:
+                invocation_log.set_response(
+                    http=http_response_summary(response),
+                    provider_request_id=request_id or None,
+                )
+            _debug(
+                "[flyfus responses] response_headers model=%s stream=%s status=%s request_id=%s content_type=%s",
+                model,
+                stream,
+                response.status_code,
+                request_id,
+                response.headers.get("content-type", ""),
+            )
+            if response.status_code < 400:
+                if invocation_log is not None:
+                    invocation_log.response.pop("error_body", None)
+                return response
+
+            error = http_error("OpenAI Responses", response.status_code, response.text)
+            if invocation_log is not None:
+                invocation_log.set_response(error_body=response.text[:2000])
+            if attempt == 0 and error.flyfus_internal_retryable:
+                if invocation_log is not None:
+                    invocation_log.event(
+                        "request_retry",
+                        adapter="openai_responses",
+                        reason=error.flyfus_error_type,
+                        retry=1,
+                        max_retries=1,
+                    )
+                with suppress(Exception):
+                    response.close()
+                delay_seconds = retry_delay_seconds(response.status_code, response.headers)
+                if delay_seconds:
+                    time.sleep(delay_seconds)
+                continue
+            raise error
+
+        raise AssertionError("unreachable")
 
     def _build_body(
         self,
@@ -432,6 +509,12 @@ class OpenAIResponsesAdapter:
         invocation_log=None,
     ) -> LLMResult:
         payload = response.json()
+        if payload.get("status") == "incomplete":
+            raise UpstreamResponseIncompleteError(
+                f"OpenAI Responses 返回未完成响应：{payload.get('incomplete_details') or 'unknown reason'}"
+            )
+        if payload.get("status") == "failed":
+            raise response_failed_error("OpenAI Responses", payload.get("error") or "unknown error")
         usage_payload = payload.get("usage") or {}
         if invocation_log is not None:
             payload_summary = responses_payload_summary(payload)
@@ -449,6 +532,99 @@ class OpenAIResponsesAdapter:
             ),
             usage=self._build_dify_usage(model, credentials, usage_payload),
         )
+
+    def _handle_response_with_retry(
+        self,
+        *,
+        model: str,
+        credentials: dict,
+        initial_response: requests.Response,
+        request_body: dict,
+        prompt_messages: list[PromptMessage],
+        invocation_log=None,
+    ) -> LLMResult:
+        response = initial_response
+        for attempt in range(2):
+            try:
+                return self._handle_response(
+                    model,
+                    credentials,
+                    response,
+                    prompt_messages,
+                    invocation_log=invocation_log,
+                )
+            except FlyfusInvokeError as error:
+                if attempt == 1 or not error.flyfus_internal_retryable:
+                    raise
+                if invocation_log is not None:
+                    invocation_log.event(
+                        "request_retry",
+                        adapter="openai_responses",
+                        reason=error.flyfus_error_type,
+                        retry=1,
+                        max_retries=1,
+                    )
+                    invocation_log.response.pop("error", None)
+                    invocation_log.response.pop("error_body", None)
+                    invocation_log.set_response(response_id=None, provider_request_id=None)
+                with suppress(Exception):
+                    response.close()
+                response = self._open_response(
+                    model=model,
+                    credentials=credentials,
+                    request_body=request_body,
+                    stream=False,
+                    invocation_log=invocation_log,
+                )
+
+        raise AssertionError("unreachable")
+
+    def _handle_stream_with_retry(
+        self,
+        *,
+        model: str,
+        credentials: dict,
+        initial_response: requests.Response,
+        request_body: dict,
+        prompt_messages: list[PromptMessage],
+        invocation_log=None,
+    ) -> Generator:
+        response = initial_response
+        for attempt in range(2):
+            yielded_any = False
+            try:
+                for chunk in self._handle_stream(
+                    model,
+                    credentials,
+                    response,
+                    prompt_messages,
+                    invocation_log=invocation_log,
+                ):
+                    yielded_any = True
+                    yield chunk
+                return
+            except FlyfusInvokeError as error:
+                if yielded_any or attempt == 1 or not error.flyfus_internal_retryable:
+                    raise
+                if invocation_log is not None:
+                    invocation_log.event(
+                        "stream_retry",
+                        attempt=attempt + 1,
+                        reason=str(error),
+                        response_id=invocation_log.response.get("response_id"),
+                    )
+                    invocation_log.set_response(response_id=None, provider_request_id=None)
+                    invocation_log.response.pop("error", None)
+                    invocation_log.response.pop("error_body", None)
+                with suppress(Exception):
+                    response.close()
+                response = self._open_response(
+                    model=model,
+                    credentials=credentials,
+                    request_body=request_body,
+                    stream=True,
+                    invocation_log=invocation_log,
+                )
 
     def _handle_stream(
         self,
@@ -505,7 +681,12 @@ class OpenAIResponsesAdapter:
                 event_counts[event_type] = event_counts.get(event_type, 0) + 1
                 self._log_stream_event(model, total_events, event_type, event)
 
-                if event_type in {"response.output_text.delta", "response.refusal.delta"}:
+                if event_type in {"response.created", "response.in_progress"}:
+                    response_payload = event.get("response") or {}
+                    response_id = response_payload.get("id") or response_id
+                    if invocation_log is not None and response_id:
+                        invocation_log.set_response(response_id=response_id)
+                elif event_type in {"response.output_text.delta", "response.refusal.delta"}:
                     delta_text = event.get("delta") or event.get("text") or ""
                     if not delta_text:
                         continue
@@ -602,7 +783,7 @@ class OpenAIResponsesAdapter:
                             stream_event_count=total_events,
                         )
                     _debug("[flyfus responses] stream_failed model=%s error=%s", model, error)
-                    raise InvokeError(f"OpenAI Responses 流式请求失败：{error}")
+                    raise response_failed_error("OpenAI Responses", error)
         except requests.exceptions.ChunkedEncodingError as error:
             _debug(
                 "[flyfus responses] stream_chunked_encoding_error model=%s error=%s total_events=%s last_event=%s "
@@ -618,7 +799,7 @@ class OpenAIResponsesAdapter:
                 usage_payload is not None,
                 len(pending_tool_calls),
             )
-            raise InvokeError(f"OpenAI Responses 流式连接提前结束：{error}") from error
+            raise _RetryableStreamError(f"OpenAI Responses 流式连接提前结束：{error}") from error
         except requests.exceptions.RequestException as error:
             _debug(
                 "[flyfus responses] stream_request_error model=%s error_type=%s error=%s total_events=%s last_event=%s "
@@ -633,7 +814,7 @@ class OpenAIResponsesAdapter:
                 yielded_chunks,
                 saw_completed,
             )
-            raise InvokeError(f"OpenAI Responses 流式请求异常：{error}") from error
+            raise _RetryableStreamError(f"OpenAI Responses 流式请求异常：{error}") from error
 
         _debug(
             "[flyfus responses] stream_end model=%s total_events=%s last_event=%s event_counts=%s text_chars=%s "
@@ -667,11 +848,11 @@ class OpenAIResponsesAdapter:
                 tool_calls_count=len(tool_calls),
             )
         if terminal_event_type == "response.incomplete":
-            raise InvokeError(
+            raise UpstreamResponseIncompleteError(
                 f"OpenAI Responses 返回未完成响应：{incomplete_details or 'unknown reason'}"
             )
         if terminal_event_type != "response.completed":
-            raise InvokeError(
+            raise _RetryableStreamError(
                 "OpenAI Responses 流式响应提前结束：未收到 response.completed"
                 f"（last_event={last_event_type or '<none>'}, events={event_counts}）"
             )

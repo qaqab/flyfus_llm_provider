@@ -9,6 +9,7 @@ from dify_plugin.entities.model.message import (
 
 from models.llm.context_guard import (
     ContextGuardError,
+    ContextWindowExceededError,
     guard_prompt_messages,
     is_context_window_error,
     validate_message_protocol,
@@ -160,7 +161,7 @@ def test_guard_fails_when_mandatory_context_exceeds_budget() -> None:
         UserPromptMessage(content="current" * 1000),
     ]
 
-    with pytest.raises(ContextGuardError, match="MANDATORY_CONTEXT_TOO_LARGE"):
+    with pytest.raises(ContextWindowExceededError, match="MANDATORY_CONTEXT_TOO_LARGE") as raised:
         guard_prompt_messages(
             messages,
             token_counter=_counter,
@@ -168,12 +169,16 @@ def test_guard_fails_when_mandatory_context_exceeds_budget() -> None:
             max_output_tokens=100,
         )
 
+    assert raised.value.flyfus_error_type == "context_window_exceeded"
+
 
 def test_protocol_validator_rejects_orphan_tool_result() -> None:
-    with pytest.raises(ContextGuardError, match="orphan tool result"):
+    with pytest.raises(ContextGuardError, match="orphan tool result") as raised:
         validate_message_protocol(
             [ToolPromptMessage(tool_call_id="call-1", content="result")]
         )
+
+    assert raised.value.flyfus_error_type == "invalid_message_protocol"
 
 
 def test_context_window_error_detection() -> None:

@@ -20,6 +20,16 @@ EMERGENCY_TARGET_RATIO = 0.60
 class ContextGuardError(ValueError):
     """Raised when mandatory context cannot fit or message protocol is invalid."""
 
+    flyfus_error_type = "invalid_message_protocol"
+    flyfus_user_message = "当前对话上下文不完整，请新建对话后重试。"
+    flyfus_retryable = False
+
+
+class ContextWindowExceededError(ContextGuardError):
+    flyfus_error_type = "context_window_exceeded"
+    flyfus_user_message = "当前对话内容过长，请缩短输入或新建对话后重试。"
+    flyfus_retryable = False
+
 
 @dataclass(frozen=True)
 class ContextGuardResult:
@@ -60,7 +70,7 @@ def guard_prompt_messages(
     safety_margin = min(32768, max(256, context_size // 50))
     hard_budget = context_size - max_output_tokens - safety_margin
     if hard_budget <= 0:
-        raise ContextGuardError(
+        raise ContextWindowExceededError(
             "MANDATORY_CONTEXT_TOO_LARGE: output reservation and safety margin "
             "consume the model context window"
         )
@@ -119,7 +129,7 @@ def guard_prompt_messages(
     validate_message_protocol(prompt_messages)
     final_tokens = count(prompt_messages)
     if final_tokens > hard_budget:
-        raise ContextGuardError(
+        raise ContextWindowExceededError(
             "MANDATORY_CONTEXT_TOO_LARGE: required context uses "
             f"{final_tokens} tokens but the input budget is {hard_budget}"
         )

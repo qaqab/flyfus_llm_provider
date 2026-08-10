@@ -1,5 +1,11 @@
 import pytest
+import requests
 
+from models.llm.errors import (
+    GeminiSafetyBlockedError,
+    GeminiStreamIncompleteError,
+    UpstreamTimeoutError,
+)
 from models.llm.native.gemini import DEFAULT_THOUGHT_SIGNATURE, GeminiNativeDocumentAdapter
 from models.llm.agent_context import _extract_context_urls, inject_context_from_tool_messages
 from dify_plugin.entities.model.llm import LLMUsage
@@ -18,9 +24,69 @@ def _adapter() -> GeminiNativeDocumentAdapter:
 class _InvocationLog:
     def __init__(self) -> None:
         self.response = {}
+        self.events = []
 
     def set_response(self, **fields) -> None:
         self.response.update(fields)
+
+    def set_replay_request(self, **fields) -> None:
+        pass
+
+    def event(self, name, **fields) -> None:
+        self.events.append({"name": name, **fields})
+
+
+def test_native_gemini_request_retries_server_error_once(monkeypatch) -> None:
+    class Response:
+        def __init__(self, status_code, payload=None, text=""):
+            self.status_code = status_code
+            self.payload = payload or {}
+            self.text = text
+            self.headers = {}
+            self.closed = False
+
+        def json(self):
+            return self.payload
+
+        def close(self):
+            self.closed = True
+
+    first = Response(503, text="temporarily unavailable")
+    second = Response(
+        200,
+        payload={
+            "candidates": [
+                {
+                    "finishReason": "STOP",
+                    "content": {"parts": [{"text": "complete"}]},
+                }
+            ],
+            "usageMetadata": {},
+        },
+    )
+    responses = iter([first, second])
+    monkeypatch.setattr(
+        "models.llm.native.gemini.requests.post",
+        lambda *_args, **_kwargs: next(responses),
+    )
+    invocation_log = _InvocationLog()
+
+    result = _adapter().invoke(
+        model="gemini-3.6-flash",
+        credentials={"api_key": "key"},
+        prompt_messages=[UserPromptMessage(content="hello")],
+        model_parameters={},
+        tools=None,
+        stop=None,
+        stream=False,
+        user=None,
+        invocation_log=invocation_log,
+    )
+
+    assert result.message.content == "complete"
+    assert first.closed is True
+    assert invocation_log.events[0]["name"] == "request_retry"
+    assert invocation_log.events[0]["reason"] == "upstream_server_error"
 
 
 def test_native_gemini_records_non_stream_response_id() -> None:
@@ -118,7 +184,7 @@ def test_native_gemini_empty_stream_raises_instead_of_returning_stop() -> None:
             assert decode_unicode is False
             yield b'data: {"candidates":[{"finishReason":"SAFETY"}]}'
 
-    with pytest.raises(InvokeError, match="finish_reasons=\\['SAFETY'\\]"):
+    with pytest.raises(GeminiSafetyBlockedError, match="安全策略"):
         list(
             _adapter()._handle_stream(
                 model="gemini-3.6-flash",
@@ -134,7 +200,40 @@ def test_native_gemini_partial_stream_requires_finish_reason() -> None:
             assert decode_unicode is False
             yield b'data: {"candidates":[{"content":{"parts":[{"text":"partial"}]}}]}'
 
-    with pytest.raises(InvokeError, match="未收到 finishReason"):
+    with pytest.raises(GeminiStreamIncompleteError, match="未收到 finishReason"):
+        list(
+            _adapter()._handle_stream(
+                model="gemini-3.6-flash",
+                credentials={},
+                response=Response(),
+            )
+        )
+
+
+def test_native_gemini_prompt_feedback_safety_block_has_specific_type() -> None:
+    class Response:
+        def iter_lines(self, decode_unicode=False):
+            assert decode_unicode is False
+            yield b'data: {"promptFeedback":{"blockReason":"SAFETY"}}'
+
+    with pytest.raises(GeminiSafetyBlockedError, match="SAFETY"):
+        list(
+            _adapter()._handle_stream(
+                model="gemini-3.6-flash",
+                credentials={},
+                response=Response(),
+            )
+        )
+
+
+def test_native_gemini_stream_read_timeout_has_specific_type() -> None:
+    class Response:
+        def iter_lines(self, decode_unicode=False):
+            assert decode_unicode is False
+            raise requests.ReadTimeout("timed out")
+            yield
+
+    with pytest.raises(UpstreamTimeoutError):
         list(
             _adapter()._handle_stream(
                 model="gemini-3.6-flash",
