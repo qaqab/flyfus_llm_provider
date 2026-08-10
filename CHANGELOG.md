@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.0.50
+
+- Raise the `muse-spark-1.2-contributor` context window to 65536 after a successful 40013-token input test.
+- Prevent the local context guard from rejecting the verified 31503-token conversation case.
+
+## 0.0.49
+
+- Add the tested `muse-spark-1.2-contributor` chat model with image input and Agent tool-call capabilities.
+- Limit Muse Spark parameters to stable temperature, Top P, output budget, penalties, and text/JSON object output.
+- Do not advertise unsupported stop sequences, thinking controls, built-in search, JSON Schema, or general document input.
+
 ## 0.0.48
 
 - Retry an OpenAI Responses stream once when it ends before `response.completed` and no response chunk has reached Dify.

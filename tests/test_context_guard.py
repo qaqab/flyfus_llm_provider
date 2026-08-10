@@ -172,6 +172,24 @@ def test_guard_fails_when_mandatory_context_exceeds_budget() -> None:
     assert raised.value.flyfus_error_type == "context_window_exceeded"
 
 
+def test_guard_accepts_muse_spark_reported_context_size() -> None:
+    messages = [
+        SystemPromptMessage(content="system"),
+        UserPromptMessage(content="current"),
+    ]
+
+    result = guard_prompt_messages(
+        messages,
+        token_counter=lambda _: 31503,
+        context_size=65536,
+        max_output_tokens=4096,
+    )
+
+    assert result.trimmed is False
+    assert result.final_tokens == 31503
+    assert result.hard_budget == 60130
+
+
 def test_protocol_validator_rejects_orphan_tool_result() -> None:
     with pytest.raises(ContextGuardError, match="orphan tool result") as raised:
         validate_message_protocol(
