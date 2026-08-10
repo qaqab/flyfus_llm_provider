@@ -3,9 +3,14 @@ from types import SimpleNamespace
 import pytest
 
 from models.llm.errors import UpstreamBadRequestError, UpstreamResponseIncompleteError
+from models.llm.native.base import model_family
 from models.llm.native.openai_responses import OpenAIResponsesAdapter
 from dify_plugin.entities.model.llm import LLMUsage
-from dify_plugin.entities.model.message import SystemPromptMessage
+from dify_plugin.entities.model.message import (
+    DocumentPromptMessageContent,
+    SystemPromptMessage,
+    UserPromptMessage,
+)
 from dify_plugin.errors.model import InvokeError
 
 
@@ -35,6 +40,66 @@ def test_responses_system_message_omits_type_and_request_omits_user() -> None:
 
     assert body["input"] == [{"role": "system", "content": "You are helpful."}]
     assert "user" not in body
+
+
+def test_muse_uses_responses_with_official_capabilities() -> None:
+    assert model_family("muse-spark-1.2-contributor") == "openai_responses"
+
+    body = _adapter()._build_body(
+        model="muse-spark-1.2-contributor",
+        credentials={},
+        prompt_messages=[SystemPromptMessage(content="You are helpful.")],
+        model_parameters={
+            "max_completion_tokens": 128000,
+            "reasoning_effort": "xhigh",
+            "enable_web_search": True,
+            "response_format": "json_schema",
+            "json_schema": {
+                "name": "probe",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {"status": {"type": "string"}},
+                    "required": ["status"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        tools=None,
+        stop=None,
+        stream=False,
+        user=None,
+    )
+
+    assert body["max_output_tokens"] == 128000
+    assert body["reasoning"] == {"effort": "xhigh"}
+    assert body["tools"] == [{"type": "web_search"}]
+    assert body["text"]["format"]["type"] == "json_schema"
+
+
+def test_muse_rejects_non_pdf_document_input() -> None:
+    with pytest.raises(InvokeError, match="仅支持 PDF"):
+        _adapter()._build_body(
+            model="muse-spark-1.2-contributor",
+            credentials={},
+            prompt_messages=[
+                UserPromptMessage(
+                    content=[
+                        DocumentPromptMessageContent(
+                            format="base64",
+                            base64_data="dGVzdA==",
+                            mime_type="text/plain",
+                            filename="notes.txt",
+                        )
+                    ]
+                )
+            ],
+            model_parameters={},
+            tools=None,
+            stop=None,
+            stream=False,
+            user=None,
+        )
 
 
 def test_responses_stream_requires_completed_terminal_event() -> None:

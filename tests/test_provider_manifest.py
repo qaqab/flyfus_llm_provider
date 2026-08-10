@@ -68,13 +68,13 @@ def test_muse_spark_contributor_exposes_only_verified_capabilities() -> None:
     assert schema.model == "muse-spark-1.2-contributor"
     assert model["features"] == [
         "agent-thought",
+        "vision",
+        "document",
         "tool-call",
         "multi-tool-call",
         "stream-tool-call",
-        "vision",
     ]
-    assert "document" not in model["features"]
-    assert model["model_properties"]["context_size"] == 65536
+    assert model["model_properties"]["context_size"] == 1048576
     assert set(rules) == {
         "temperature",
         "top_p",
@@ -82,19 +82,28 @@ def test_muse_spark_contributor_exposes_only_verified_capabilities() -> None:
         "frequency_penalty",
         "presence_penalty",
         "response_format",
+        "json_schema",
+        "reasoning_effort",
+        "enable_web_search",
     }
     assert rules["temperature"]["min"] == 0
-    assert rules["temperature"]["max"] == 1.5
+    assert rules["temperature"]["max"] == 2
     assert rules["top_p"]["min"] == 0.01
     assert rules["top_p"]["max"] == 1
-    assert rules["max_tokens"]["default"] == 4096
+    assert rules["max_tokens"]["default"] == 128000
     assert rules["max_tokens"]["min"] == 512
-    assert rules["max_tokens"]["max"] == 32768
+    assert rules["max_tokens"]["max"] == 128000
     assert rules["frequency_penalty"]["min"] == -2
     assert rules["frequency_penalty"]["max"] == 2
     assert rules["presence_penalty"]["min"] == -2
     assert rules["presence_penalty"]["max"] == 2
-    assert rules["response_format"]["options"] == ["text", "json_object"]
+    assert rules["response_format"]["options"] == ["text", "json_object", "json_schema"]
+    assert rules["reasoning_effort"]["options"] == ["minimal", "low", "medium", "high", "xhigh"]
+    assert rules["reasoning_effort"]["default"] == "high"
+    assert rules["enable_web_search"]["default"] is False
+    assert model["pricing"]["input"] == "0.10"
+    assert model["pricing"]["output"] == "0.20"
+    assert model["extra"]["token_param_name"] == "max_completion_tokens"
 
     position = yaml.safe_load((plugin_root / "models" / "llm" / "_position.yaml").read_text(encoding="utf-8"))
     assert position.count("muse-spark-1.2-contributor") == 1

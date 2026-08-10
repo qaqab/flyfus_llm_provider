@@ -344,6 +344,7 @@ class OpenAIResponsesAdapter:
                 content_parts.append(item)
             elif part.type == PromptMessageContentType.DOCUMENT and self._supports_attachments(model):
                 document_part: DocumentPromptMessageContent = part
+                self._validate_document_input(model, document_part)
                 document_url = getattr(document_part, "url", "") or ""
                 if document_part.format == "url" and document_url:
                     content_parts.append(
@@ -366,6 +367,15 @@ class OpenAIResponsesAdapter:
                         }
                     )
         return content_parts
+
+    @staticmethod
+    def _validate_document_input(model: str, document: DocumentPromptMessageContent) -> None:
+        if model.lower() != "muse-spark-1.2-contributor":
+            return
+        filename = (document.filename or "").lower()
+        if document.mime_type == "application/pdf" or filename.endswith(".pdf"):
+            return
+        raise InvokeError("Muse Spark 推理文档仅支持 PDF；TXT 和 JSON 文件不会作为模型附件读取。")
 
     @staticmethod
     def _supports_attachments(model: str) -> bool:

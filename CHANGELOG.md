@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.52
+
+- Correct Muse Spark Contributor to Meta's documented 1,048,576-token context window and official pricing.
+- Route Muse Spark through the Responses API for reasoning effort, web search, JSON Schema, and PDF input.
+- Use the official `max_completion_tokens` parameter while retaining the Dify-facing `max_tokens` control.
+
 ## 0.0.50
 
 - Raise the `muse-spark-1.2-contributor` context window to 65536 after a successful 40013-token input test.

@@ -5,7 +5,10 @@ from dify_plugin.errors.model import InvokeError
 
 def model_family(model: str) -> str:
     model_name = model.lower()
-    if model_name == "high" or model_name.startswith(("gpt-", "grok-")):
+    if (
+        model_name in {"high", "muse-spark-1.2-contributor"}
+        or model_name.startswith(("gpt-", "grok-"))
+    ):
         return "openai_responses"
     if model_name.startswith("gemini-"):
         return "gemini"
