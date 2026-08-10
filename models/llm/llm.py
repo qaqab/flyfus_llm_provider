@@ -586,6 +586,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
             normalize_model_parameters=self._normalize_model_parameters,
             calc_response_usage=self._calc_response_usage,
             build_dify_usage=self._build_dify_usage,
+            request_headers=self._request_headers,
         )
 
     @staticmethod
@@ -874,6 +875,11 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                     adapter="gemini_native",
                     upstream_request={
                         "endpoint": self._endpoint_url(normalized_credentials, f"models/{model}:generateContent"),
+                        "headers": {
+                            key: value
+                            for key, value in self._request_headers(normalized_credentials).items()
+                            if key.lower() != "authorization"
+                        },
                         "body_summary": {
                             "content_count": len(upstream_request_body.get("contents") or []),
                             "tool_count": len(upstream_request_body.get("tools") or []),

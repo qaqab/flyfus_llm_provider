@@ -117,7 +117,10 @@ class InvocationLog:
         self.flushed = True
 
         response_id = _first_present(self.response.get("response_id"), self.response.get("id"))
-        upstream_request_id = _nested_get(self.response, "http", "headers", "x-request-id")
+        upstream_request_id = _first_present(
+            _nested_get(self.response, "http", "headers", "x-request-id"),
+            self.response.get("provider_request_id"),
+        )
         upstream_client_request_id = _nested_get(self.response, "http", "headers", "x-client-request-id")
         upstream_cf_ray = _nested_get(self.response, "http", "headers", "cf-ray")
         upstream_request = self.request.get("upstream_request") or {}
@@ -126,8 +129,11 @@ class InvocationLog:
         event = {
             "time": _iso_now(),
             "source": "flyfus_llm_provider",
-            "schema_version": 6,
+            "schema_version": 7,
             "event_type": "llm_invocation",
+            "log_id": self.invocation_id,
+            "request_id": self.invocation_id,
+            "x_request_id": self.invocation_id,
             "invocation_id": self.invocation_id,
             "client_request_id": self.invocation_id,
             "response_id": response_id,
@@ -149,6 +155,9 @@ class InvocationLog:
             "duration_ms": int((time.time() - self.started_at) * 1000),
             "status": (self.result or {}).get("status", "unknown"),
             "ids": {
+                "log_id": self.invocation_id,
+                "request_id": self.invocation_id,
+                "x_request_id": self.invocation_id,
                 "invocation_id": self.invocation_id,
                 "client_request_id": self.invocation_id,
                 "response_id": response_id,
@@ -278,13 +287,15 @@ def failure_output_text(invocation_log: InvocationLog, error: BaseException) -> 
         "retryable": bool(getattr(error, "flyfus_retryable", False)),
         "partial_output": partial_output_characters > 0,
         "log_id": invocation_log.invocation_id,
+        "invocation_id": invocation_log.invocation_id,
+        "request_id": invocation_log.invocation_id,
+        "client_request_id": invocation_log.invocation_id,
         "response_id": response.get("response_id"),
-        "request_id": (
+        "upstream_request_id": (
             upstream_headers.get("x-request-id")
             or upstream_headers.get("openai-request-id")
             or response.get("provider_request_id")
         ),
-        "client_request_id": upstream_headers.get("x-client-request-id"),
         "cf_ray": upstream_headers.get("cf-ray"),
         "error": error_details,
     }

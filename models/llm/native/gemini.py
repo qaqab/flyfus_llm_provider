@@ -40,9 +40,11 @@ class GeminiNativeDocumentAdapter:
         normalize_model_parameters: Callable[[str, dict], dict],
         calc_response_usage: Callable[[str, dict, int, int], object],
         build_dify_usage: Optional[Callable[[str, dict, dict], object]] = None,
+        request_headers: Optional[Callable[[dict], dict]] = None,
     ) -> None:
         self._endpoint_url = endpoint_url
         self._normalize_model_parameters = normalize_model_parameters
+        self._request_headers = request_headers or (lambda _credentials: {"Content-Type": "application/json"})
         self._build_dify_usage = build_dify_usage or (
             lambda model, credentials, raw_usage: calc_response_usage(
                 model,
@@ -72,12 +74,14 @@ class GeminiNativeDocumentAdapter:
         params = {"key": credentials["api_key"]}
         if stream:
             params["alt"] = "sse"
+        request_headers = self._request_headers(credentials)
+        request_headers.pop("Authorization", None)
 
         for attempt in range(2):
             try:
                 response = requests.post(
                     request_url,
-                    headers={"Content-Type": "application/json"},
+                    headers=request_headers,
                     params=params,
                     json=request_body,
                     stream=stream,

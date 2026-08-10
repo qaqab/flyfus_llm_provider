@@ -12,7 +12,9 @@ The JSON fields are:
 - `user_message`: safe text for end users.
 - `retryable`: whether an outer caller may submit the whole task again.
 - `partial_output`: whether any visible or reasoning chunk reached Dify before failure.
-- `log_id`, `response_id`, `request_id`, `client_request_id`, `cf_ray`: tracing identifiers.
+- `log_id`, `invocation_id`, `request_id`, `client_request_id`: the plugin invocation identifier.
+- `response_id`: the model response identifier, when the upstream produced one.
+- `upstream_request_id`, `cf_ray`: optional identifiers returned by the upstream service.
 - `error`: complete safe diagnostics. Traceback, replay body, prompts, and credentials remain in SLS.
 
 The envelope intentionally has no protocol-version field. Existing fields must remain backward compatible;

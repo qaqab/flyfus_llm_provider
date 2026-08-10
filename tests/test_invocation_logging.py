@@ -49,9 +49,11 @@ def test_stream_failure_is_logged_and_raised_for_dify_retry(monkeypatch) -> None
         "retryable": False,
         "partial_output": False,
         "log_id": log.invocation_id,
+        "invocation_id": log.invocation_id,
+        "request_id": log.invocation_id,
+        "client_request_id": log.invocation_id,
         "response_id": None,
-        "request_id": None,
-        "client_request_id": None,
+        "upstream_request_id": None,
         "cf_ray": None,
     }
     assert "model: gemini-3.6-flash" in error_details
@@ -97,9 +99,11 @@ def test_recognized_stream_failure_uses_specific_flyfus_error_type(monkeypatch) 
         "retryable": True,
         "partial_output": False,
         "log_id": log.invocation_id,
+        "invocation_id": log.invocation_id,
+        "request_id": log.invocation_id,
+        "client_request_id": log.invocation_id,
         "response_id": "resp_123",
-        "request_id": "request-123",
-        "client_request_id": "client-request-123",
+        "upstream_request_id": "request-123",
         "cf_ray": "ray-123",
     }
     assert "stream_event_count: 44" in error_details
@@ -130,6 +134,14 @@ def test_invocation_event_exposes_model_route_fields(monkeypatch) -> None:
 
     log.flush()
 
+    assert captured["event"]["schema_version"] == 7
+    assert captured["event"]["log_id"] == log.invocation_id
+    assert captured["event"]["request_id"] == log.invocation_id
+    assert captured["event"]["x_request_id"] == log.invocation_id
+    assert captured["event"]["invocation_id"] == log.invocation_id
+    assert captured["event"]["ids"]["log_id"] == log.invocation_id
+    assert captured["event"]["ids"]["request_id"] == log.invocation_id
+    assert captured["event"]["ids"]["x_request_id"] == log.invocation_id
     assert captured["event"]["model"] == "gpt-5.6-sol"
     assert captured["event"]["configured_model"] == "medium"
     assert captured["event"]["routed_model"] == "gpt-5.6-sol"
@@ -189,6 +201,10 @@ def test_sls_log_indexes_model_route_fields(monkeypatch) -> None:
 
     sls_logging.write_invocation_log(credentials, event)
 
+    assert captured["contents"]["log_id"] == "invocation-1"
+    assert captured["contents"]["request_id"] == "invocation-1"
+    assert captured["contents"]["x_request_id"] == "invocation-1"
+    assert captured["contents"]["invocation_id"] == "invocation-1"
     assert captured["contents"]["model"] == "gpt-5.6-sol"
     assert captured["contents"]["configured_model"] == "medium"
     assert captured["contents"]["routed_model"] == "gpt-5.6-sol"

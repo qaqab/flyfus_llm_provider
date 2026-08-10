@@ -13,11 +13,12 @@ from dify_plugin.entities.model.message import AssistantPromptMessage, ToolPromp
 from dify_plugin.errors.model import InvokeError
 
 
-def _adapter() -> GeminiNativeDocumentAdapter:
+def _adapter(request_headers=None) -> GeminiNativeDocumentAdapter:
     return GeminiNativeDocumentAdapter(
         endpoint_url=lambda _credentials, _path: "https://example.test/",
         normalize_model_parameters=lambda _model, parameters: parameters,
         calc_response_usage=lambda *_args: LLMUsage.empty_usage(),
+        request_headers=request_headers,
     )
 
 
@@ -34,6 +35,52 @@ class _InvocationLog:
 
     def event(self, name, **fields) -> None:
         self.events.append({"name": name, **fields})
+
+
+def test_native_gemini_sends_invocation_id_as_request_id(monkeypatch) -> None:
+    captured = {}
+
+    class Response:
+        status_code = 200
+        headers = {}
+        text = ""
+
+        def json(self):
+            return {
+                "candidates": [
+                    {
+                        "finishReason": "STOP",
+                        "content": {"parts": [{"text": "complete"}]},
+                    }
+                ],
+                "usageMetadata": {},
+            }
+
+    def post(*_args, **kwargs):
+        captured.update(kwargs)
+        return Response()
+
+    monkeypatch.setattr("models.llm.native.gemini.requests.post", post)
+    invocation_id = "invocation-123"
+    adapter = _adapter(
+        request_headers=lambda credentials: {
+            "Content-Type": "application/json",
+            "x-request-id": credentials["_flyfus_invocation_id"],
+        }
+    )
+
+    adapter.invoke(
+        model="gemini-3.6-flash",
+        credentials={"api_key": "key", "_flyfus_invocation_id": invocation_id},
+        prompt_messages=[UserPromptMessage(content="hello")],
+        model_parameters={},
+        tools=None,
+        stop=None,
+        stream=False,
+        user=None,
+    )
+
+    assert captured["headers"]["x-request-id"] == invocation_id
 
 
 def test_native_gemini_request_retries_server_error_once(monkeypatch) -> None:
