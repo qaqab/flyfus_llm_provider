@@ -52,7 +52,11 @@ from models.llm.parameter_conversion import normalize_generation_parameters, nor
 from models.llm.native.base import model_family
 from models.llm.native.gemini import GeminiNativeDocumentAdapter
 from models.llm.native.openai_responses import OpenAIResponsesAdapter
-from models.llm.prompt_preprocessing import apply_json_schema_prompt, drop_analyze_channel
+from models.llm.prompt_preprocessing import (
+    apply_json_schema_prompt,
+    deduplicate_tool_responses,
+    drop_analyze_channel,
+)
 from models.llm.reasoning_effort import reasoning_effort_from_tool_messages
 from models.llm.usage_reporting import format_usage_currency, normalize_upstream_usage, report_token_usage
 
@@ -62,6 +66,7 @@ _ACTIVE_INVOCATION_LOG: ContextVar[Optional[InvocationLog]] = ContextVar(
     default=None,
 )
 _GEMINI_MAX_RETRIES = 2
+_LOCAL_TOKENIZER_CHUNK_SIZE = 80_000
 
 
 class _GeminiPartialOutputError(FlyfusInvokeError):
@@ -121,6 +126,14 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
 
     Gemini 和其他国产/兼容模型暂不走文件特殊路径，后续可按模型族单独拆分。
     """
+
+    def _get_num_tokens_by_gpt2(self, text: str) -> int:
+        """Tokenize long text locally instead of falling back to one token per character."""
+        count_chunk = super()._get_num_tokens_by_gpt2
+        return sum(
+            count_chunk(text[offset : offset + _LOCAL_TOKENIZER_CHUNK_SIZE])
+            for offset in range(0, len(text), _LOCAL_TOKENIZER_CHUNK_SIZE)
+        )
 
     def _wrap_thinking_by_reasoning_content(self, delta: dict, is_reasoning: bool) -> tuple[str, bool]:
         """把上游 reasoning 字段转换成 Dify 能识别的思考块。
@@ -702,6 +715,8 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
             not model_route_applied or "reasoning_effort" in supported_route_parameters(model)
         ):
             effective_model_parameters["reasoning_effort"] = reasoning_effort
+
+        deduplicate_tool_responses(prompt_messages)
 
         invocation_log = InvocationLog.from_credentials(
             model=model,

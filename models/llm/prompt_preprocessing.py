@@ -7,10 +7,47 @@ from dify_plugin.entities.model.message import (
     PromptMessage,
     PromptMessageRole,
     SystemPromptMessage,
+    ToolPromptMessage,
 )
 
 
 _THINK_PATTERN = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
+_TOOL_RESPONSE_PREFIX = "tool response: "
+_DUPLICATE_TOOL_RESPONSE_SEPARATOR = ".tool response: "
+_MCP_TOOL_NAMES = frozenset({"batch_call", "tool_detail"})
+
+
+def deduplicate_tool_responses(prompt_messages: list[PromptMessage]) -> int:
+    """Remove an exact text copy emitted alongside equivalent structured MCP output."""
+    removed_characters = 0
+    for prompt_message in prompt_messages:
+        if not isinstance(prompt_message, ToolPromptMessage):
+            continue
+        if prompt_message.name not in _MCP_TOOL_NAMES:
+            continue
+        if not isinstance(prompt_message.content, str):
+            continue
+
+        content = prompt_message.content
+        if not content.startswith(_TOOL_RESPONSE_PREFIX) or not content.endswith("."):
+            continue
+
+        separator_index = content.rfind(_DUPLICATE_TOOL_RESPONSE_SEPARATOR)
+        if separator_index < 0:
+            continue
+
+        first_payload = content[len(_TOOL_RESPONSE_PREFIX) : separator_index]
+        second_payload = content[
+            separator_index + len(_DUPLICATE_TOOL_RESPONSE_SEPARATOR) : -1
+        ]
+        if first_payload != second_payload:
+            continue
+
+        deduplicated = content[: separator_index + 1]
+        removed_characters += len(content) - len(deduplicated)
+        prompt_message.content = deduplicated
+
+    return removed_characters
 
 
 def drop_analyze_channel(prompt_messages: list[PromptMessage]) -> None:
