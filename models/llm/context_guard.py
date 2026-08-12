@@ -15,6 +15,8 @@ from dify_plugin.entities.model.message import (
 SOFT_LIMIT_RATIO = 0.80
 TARGET_LIMIT_RATIO = 0.70
 EMERGENCY_TARGET_RATIO = 0.60
+CONTEXT_RETRY_STAGES = ("p3_history", "p2_tool_cycles", "p1_history")
+_RETRY_STAGE_PRIORITIES = {"p3_history": 3, "p1_history": 1}
 
 
 class ContextGuardError(ValueError):
@@ -41,6 +43,17 @@ class ContextGuardResult:
     removed_message_count: int
     removed_block_count: int
     emergency: bool
+
+    @property
+    def trimmed(self) -> bool:
+        return self.removed_message_count > 0
+
+
+@dataclass(frozen=True)
+class ContextRetryTrimResult:
+    stage: str
+    removed_message_count: int
+    removed_block_count: int
 
     @property
     def trimmed(self) -> bool:
@@ -146,6 +159,72 @@ def guard_prompt_messages(
     )
 
 
+def trim_prompt_messages_for_context_retry(
+    prompt_messages: list[PromptMessage],
+    *,
+    stage: str,
+    required_user_message: Optional[PromptMessage] = None,
+) -> ContextRetryTrimResult:
+    """Apply one priority-aware recovery stage without estimating tokens."""
+    validate_message_protocol(prompt_messages)
+    if stage not in CONTEXT_RETRY_STAGES:
+        raise ValueError(f"unsupported context retry stage: {stage}")
+
+    removable_blocks: list[_Block] = []
+    if stage == "p2_tool_cycles":
+        removable_blocks = _tool_cycle_blocks(prompt_messages)
+    else:
+        priority = _RETRY_STAGE_PRIORITIES[stage]
+        removable_blocks = [
+            block
+            for block in _build_blocks(prompt_messages, required_user_message)
+            if not block.mandatory and block.priority == priority
+        ]
+    removed_indices = {
+        index
+        for block in removable_blocks
+        for index in block.indices
+    }
+    if removed_indices:
+        prompt_messages[:] = [
+            message
+            for index, message in enumerate(prompt_messages)
+            if index not in removed_indices
+        ]
+
+    validate_message_protocol(prompt_messages)
+    return ContextRetryTrimResult(
+        stage=stage,
+        removed_message_count=len(removed_indices),
+        removed_block_count=len(removable_blocks),
+    )
+
+
+def _tool_cycle_blocks(prompt_messages: list[PromptMessage]) -> list[_Block]:
+    blocks: list[_Block] = []
+    index = 0
+    while index < len(prompt_messages):
+        message = prompt_messages[index]
+        if not isinstance(message, AssistantPromptMessage) or not message.tool_calls:
+            index += 1
+            continue
+
+        call_ids = {str(call.id) for call in message.tool_calls if call.id}
+        end = index + 1
+        found_ids: set[str] = set()
+        while end < len(prompt_messages) and isinstance(
+            prompt_messages[end], ToolPromptMessage
+        ):
+            found_ids.add(str(prompt_messages[end].tool_call_id or ""))
+            end += 1
+            if found_ids == call_ids:
+                break
+        if found_ids == call_ids:
+            blocks.append(_Block(indices=tuple(range(index, end)), priority=2))
+        index = end
+    return blocks
+
+
 def validate_message_protocol(prompt_messages: list[PromptMessage]) -> None:
     """Reject orphaned or incomplete tool-call cycles."""
 
@@ -187,6 +266,8 @@ def is_context_window_error(error: BaseException) -> bool:
         marker in text
         for marker in (
             "exceeds the context window",
+            "context window exceeded",
+            "context_window_exceeded",
             "context length exceeded",
             "maximum context length",
             "too many input tokens",

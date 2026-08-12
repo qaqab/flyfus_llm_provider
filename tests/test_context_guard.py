@@ -8,10 +8,12 @@ from dify_plugin.entities.model.message import (
 )
 
 from models.llm.context_guard import (
+    CONTEXT_RETRY_STAGES,
     ContextGuardError,
     ContextWindowExceededError,
     guard_prompt_messages,
     is_context_window_error,
+    trim_prompt_messages_for_context_retry,
     validate_message_protocol,
 )
 
@@ -29,6 +31,14 @@ def _tool_call(call_id: str):
 
 def _counter(messages):
     return sum(len(str(message.content or "")) + 10 for message in messages)
+
+
+def test_context_retry_stage_order() -> None:
+    assert CONTEXT_RETRY_STAGES == (
+        "p3_history",
+        "p2_tool_cycles",
+        "p1_history",
+    )
 
 
 def test_guard_keeps_context_below_soft_limit_unchanged() -> None:
@@ -205,7 +215,117 @@ def test_context_window_error_detection() -> None:
     )
 
     assert is_context_window_error(error) is True
+    assert is_context_window_error(RuntimeError("context_window_exceeded")) is True
     assert is_context_window_error(RuntimeError("timeout")) is False
+
+
+def test_context_retry_removes_p3_history_before_recent_history() -> None:
+    current_user = UserPromptMessage(content="current")
+    messages = [
+        SystemPromptMessage(content="system"),
+        UserPromptMessage(content="old-user"),
+        AssistantPromptMessage(content="old-answer"),
+        UserPromptMessage(content="recent-user-1"),
+        AssistantPromptMessage(content="recent-answer-1"),
+        UserPromptMessage(content="recent-user-2"),
+        AssistantPromptMessage(content="recent-answer-2"),
+        current_user,
+    ]
+
+    result = trim_prompt_messages_for_context_retry(
+        messages,
+        stage="p3_history",
+        required_user_message=current_user,
+    )
+
+    assert result.stage == "p3_history"
+    assert result.removed_message_count == 2
+    assert result.removed_block_count == 1
+    assert [message.content for message in messages] == [
+        "system",
+        "recent-user-1",
+        "recent-answer-1",
+        "recent-user-2",
+        "recent-answer-2",
+        "current",
+    ]
+
+
+def test_context_retry_removes_p1_history_after_p3_stage() -> None:
+    current_user = UserPromptMessage(content="current")
+    messages = [
+        SystemPromptMessage(content="system"),
+        UserPromptMessage(content="recent-user-1"),
+        AssistantPromptMessage(content="recent-answer-1"),
+        UserPromptMessage(content="recent-user-2"),
+        AssistantPromptMessage(content="recent-answer-2"),
+        current_user,
+    ]
+
+    result = trim_prompt_messages_for_context_retry(
+        messages,
+        stage="p1_history",
+        required_user_message=current_user,
+    )
+
+    assert result.stage == "p1_history"
+    assert result.removed_message_count == 4
+    assert result.removed_block_count == 2
+    assert [message.content for message in messages] == ["system", "current"]
+
+
+def test_context_retry_removes_complete_p2_tool_cycles() -> None:
+    current_user = UserPromptMessage(content="current")
+    parallel_calls = AssistantPromptMessage(
+        content="",
+        tool_calls=[_tool_call("call-1"), _tool_call("call-2")],
+    )
+    messages = [
+        SystemPromptMessage(content="system"),
+        current_user,
+        parallel_calls,
+        ToolPromptMessage(
+            name="batch_call",
+            tool_call_id="call-1",
+            content="large-result-1",
+        ),
+        ToolPromptMessage(
+            name="batch_call",
+            tool_call_id="call-2",
+            content="large-result-2",
+        ),
+        AssistantPromptMessage(content="progress update"),
+    ]
+
+    result = trim_prompt_messages_for_context_retry(
+        messages,
+        stage="p2_tool_cycles",
+        required_user_message=current_user,
+    )
+
+    assert result.stage == "p2_tool_cycles"
+    assert result.removed_message_count == 3
+    assert result.removed_block_count == 1
+    assert [message.content for message in messages] == [
+        "system",
+        "current",
+        "progress update",
+    ]
+    validate_message_protocol(messages)
+
+
+def test_context_retry_p2_is_noop_without_complete_tool_cycle() -> None:
+    current_user = UserPromptMessage(content="current")
+    messages = [current_user, AssistantPromptMessage(content="ordinary answer")]
+
+    result = trim_prompt_messages_for_context_retry(
+        messages,
+        stage="p2_tool_cycles",
+        required_user_message=current_user,
+    )
+
+    assert result.trimmed is False
+    assert [message.content for message in messages] == ["current", "ordinary answer"]
 
 
 def test_emergency_guard_trims_even_when_configured_window_is_large() -> None:

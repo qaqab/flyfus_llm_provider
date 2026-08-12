@@ -26,10 +26,11 @@ from dify_plugin.interfaces.model.openai_compatible.llm import OAICompatLargeLan
 from models.llm.agent_context import inject_context_from_tool_messages
 from models.llm.ai_mode import apply_ai_mode
 from models.llm.context_guard import (
-    ContextGuardResult,
+    CONTEXT_RETRY_STAGES,
     ContextWindowExceededError,
-    guard_prompt_messages,
     is_context_window_error,
+    trim_prompt_messages_for_context_retry,
+    validate_message_protocol,
 )
 from models.llm.flyfus_settings import extract_flyfus_settings
 from models.llm.geo_prompt import render_geo_prompt_references
@@ -46,7 +47,7 @@ from models.llm.invocation_logging import (
 )
 from models.llm.dify_runtime_context import DIFY_RUNTIME_CONTEXT_KEY
 from models.llm.errors import FlyfusInvokeError, GeminiStreamIncompleteError
-from models.llm.model_catalog import load_model_configs, load_model_extra, load_predefined_chat_models
+from models.llm.model_catalog import load_model_extra, load_predefined_chat_models
 from models.llm.model_route import apply_model_route, supported_route_parameters
 from models.llm.parameter_conversion import normalize_generation_parameters, normalize_max_tokens
 from models.llm.native.base import model_family
@@ -66,7 +67,6 @@ _ACTIVE_INVOCATION_LOG: ContextVar[Optional[InvocationLog]] = ContextVar(
     default=None,
 )
 _GEMINI_MAX_RETRIES = 2
-_LOCAL_TOKENIZER_CHUNK_SIZE = 80_000
 
 
 class _GeminiPartialOutputError(FlyfusInvokeError):
@@ -126,14 +126,6 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
 
     Gemini 和其他国产/兼容模型暂不走文件特殊路径，后续可按模型族单独拆分。
     """
-
-    def _get_num_tokens_by_gpt2(self, text: str) -> int:
-        """Tokenize long text locally instead of falling back to one token per character."""
-        count_chunk = super()._get_num_tokens_by_gpt2
-        return sum(
-            count_chunk(text[offset : offset + _LOCAL_TOKENIZER_CHUNK_SIZE])
-            for offset in range(0, len(text), _LOCAL_TOKENIZER_CHUNK_SIZE)
-        )
 
     def _wrap_thinking_by_reasoning_content(self, delta: dict, is_reasoning: bool) -> tuple[str, bool]:
         """把上游 reasoning 字段转换成 Dify 能识别的思考块。
@@ -635,58 +627,6 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
         usage.currency = format_usage_currency(raw_usage, log_id=str(log_id) if log_id else None)
         return usage
 
-    def _guard_prompt_context(
-        self,
-        *,
-        model: str,
-        credentials: dict,
-        prompt_messages: list[PromptMessage],
-        model_parameters: dict,
-        tools: Optional[list[PromptMessageTool]],
-        emergency: bool = False,
-        required_user_message: Optional[PromptMessage] = None,
-    ) -> Optional[ContextGuardResult]:
-        config = load_model_configs().get(model, {})
-        context_size = config.get("model_properties", {}).get("context_size")
-        if not isinstance(context_size, int) or context_size <= 0:
-            return None
-
-        max_output_tokens = next(
-            (
-                value
-                for key in ("max_output_tokens", "max_completion_tokens", "max_tokens")
-                if isinstance((value := model_parameters.get(key)), int) and value > 0
-            ),
-            None,
-        )
-        if max_output_tokens is None:
-            for rule in config.get("parameter_rules", []):
-                if rule.get("name") == "max_tokens" and isinstance(rule.get("default"), int):
-                    max_output_tokens = rule["default"]
-                    break
-        if max_output_tokens is None:
-            max_output_tokens = 4096
-
-        extra_input_tokens = 0
-        json_schema = model_parameters.get("json_schema")
-        if json_schema:
-            schema_text = json_schema if isinstance(json_schema, str) else json.dumps(json_schema)
-            extra_input_tokens = self._num_tokens_from_string(schema_text)
-
-        return guard_prompt_messages(
-            prompt_messages,
-            token_counter=lambda messages: self._num_tokens_from_messages(
-                messages,
-                tools=tools,
-                credentials=credentials,
-            ),
-            context_size=context_size,
-            max_output_tokens=max_output_tokens,
-            extra_input_tokens=extra_input_tokens,
-            emergency=emergency,
-            required_user_message=required_user_message,
-        )
-
     def _invoke(
         self,
         model: str,
@@ -717,6 +657,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
             effective_model_parameters["reasoning_effort"] = reasoning_effort
 
         deduplicate_tool_responses(prompt_messages)
+        validate_message_protocol(prompt_messages)
 
         invocation_log = InvocationLog.from_credentials(
             model=model,
@@ -811,66 +752,39 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
             with invocation_log.step("analyze_channel_drop"):
                 with suppress(Exception):
                     drop_analyze_channel(prompt_messages)
-            with invocation_log.step("context_guard"):
-                guard_result = self._guard_prompt_context(
-                    model=model,
-                    credentials=normalized_credentials,
-                    prompt_messages=prompt_messages,
-                    model_parameters=effective_model_parameters,
-                    tools=tools,
-                    required_user_message=required_user_message,
-                )
-            if guard_result is not None:
-                invocation_log.event(
-                    "context_guard",
-                    initial_tokens=guard_result.initial_tokens,
-                    final_tokens=guard_result.final_tokens,
-                    hard_budget=guard_result.hard_budget,
-                    soft_limit=guard_result.soft_limit,
-                    target_limit=guard_result.target_limit,
-                    removed_message_count=guard_result.removed_message_count,
-                    removed_block_count=guard_result.removed_block_count,
-                    emergency=guard_result.emergency,
-                )
-
-            context_retry_used = False
+            context_retry_stage_index = 0
 
             def recover_from_context_error(error: BaseException) -> bool:
-                nonlocal context_retry_used
+                nonlocal context_retry_stage_index
                 if not is_context_window_error(error):
                     return False
-                if context_retry_used:
-                    raise ContextWindowExceededError(
-                        "CONTEXT_WINDOW_EXCEEDED: emergency context retry also exceeded the model limit"
-                    ) from error
-                emergency_result = self._guard_prompt_context(
-                    model=model,
-                    credentials=normalized_credentials,
-                    prompt_messages=prompt_messages,
-                    model_parameters=effective_model_parameters,
-                    tools=tools,
-                    emergency=True,
-                    required_user_message=required_user_message,
-                )
-                if emergency_result is None or not emergency_result.trimmed:
-                    raise ContextWindowExceededError(
-                        "CONTEXT_WINDOW_EXCEEDED: no optional context block remains "
-                        "for a safe retry"
-                    ) from error
-                context_retry_used = True
-                invocation_log.event(
-                    "context_guard_retry",
-                    initial_tokens=emergency_result.initial_tokens,
-                    final_tokens=emergency_result.final_tokens,
-                    hard_budget=emergency_result.hard_budget,
-                    removed_message_count=emergency_result.removed_message_count,
-                    removed_block_count=emergency_result.removed_block_count,
-                )
-                invocation_log.set_request(
-                    prompt_metrics_final=prompt_messages_metrics(prompt_messages),
-                    prompt_messages_final=prompt_messages_summary(prompt_messages),
-                )
-                return True
+                while context_retry_stage_index < len(CONTEXT_RETRY_STAGES):
+                    stage = CONTEXT_RETRY_STAGES[context_retry_stage_index]
+                    context_retry_stage_index += 1
+                    trim_result = trim_prompt_messages_for_context_retry(
+                        prompt_messages=prompt_messages,
+                        stage=stage,
+                        required_user_message=required_user_message,
+                    )
+                    if not trim_result.trimmed:
+                        continue
+                    invocation_log.response.pop("error_body", None)
+                    invocation_log.set_response(response_id=None, provider_request_id=None)
+                    invocation_log.event(
+                        "context_error_retry",
+                        stage=trim_result.stage,
+                        retry=context_retry_stage_index,
+                        removed_message_count=trim_result.removed_message_count,
+                        removed_block_count=trim_result.removed_block_count,
+                    )
+                    invocation_log.set_request(
+                        prompt_metrics_final=prompt_messages_metrics(prompt_messages),
+                        prompt_messages_final=prompt_messages_summary(prompt_messages),
+                    )
+                    return True
+                raise ContextWindowExceededError(
+                    "CONTEXT_WINDOW_EXCEEDED: all safe context recovery stages were exhausted"
+                ) from error
 
             invocation_log.set_request(
                 prompt_metrics_final=prompt_messages_metrics(prompt_messages),
@@ -1054,12 +968,14 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                         invocation_log,
                         usage_reporter,
                     )
-                try:
-                    result = invoke_openai_responses()
-                except InvokeError as error:
-                    if not recover_from_context_error(error):
+                while True:
+                    try:
+                        result = invoke_openai_responses()
+                        break
+                    except InvokeError as error:
+                        if recover_from_context_error(error):
+                            continue
                         raise
-                    result = invoke_openai_responses()
                 result_summary = llm_result_summary(result)
                 invocation_log.set_response(**result_summary)
                 invocation_log.success(result_type=type(result).__name__, output_text=result_summary.get("output_text"))
@@ -1137,12 +1053,14 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                     invocation_log,
                     usage_reporter,
                 )
-            try:
-                result = invoke_openai_compatible()
-            except InvokeError as error:
-                if not recover_from_context_error(error):
+            while True:
+                try:
+                    result = invoke_openai_compatible()
+                    break
+                except InvokeError as error:
+                    if recover_from_context_error(error):
+                        continue
                     raise
-                result = invoke_openai_compatible()
             result_summary = llm_result_summary(result)
             invocation_log.set_response(**result_summary)
             invocation_log.success(result_type=type(result).__name__, output_text=result_summary.get("output_text"))
