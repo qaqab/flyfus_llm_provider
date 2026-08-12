@@ -9,7 +9,7 @@ def _route_message(payload: str, prefix: str = "Keep this instruction.\n") -> Sy
     )
 
 
-def test_gpt_route_filters_unsupported_parameters_and_caps_max_tokens() -> None:
+def test_sol_route_filters_parameters_stripped_by_upstream() -> None:
     messages = [
         _route_message(
             """{
@@ -31,9 +31,6 @@ def test_gpt_route_filters_unsupported_parameters_and_caps_max_tokens() -> None:
     assert result.applied is True
     assert result.model == "gpt-5.6-sol"
     assert result.parameters == {
-        "max_tokens": 128000,
-        "temperature": 0.7,
-        "top_p": 0.9,
         "reasoning_effort": "high",
         "enable_web_search": True,
     }

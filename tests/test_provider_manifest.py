@@ -18,6 +18,85 @@ def test_provider_credential_form_types_are_supported_by_dify() -> None:
     )
 
 
+def test_gpt_terra_exposes_only_effective_parameters() -> None:
+    plugin_root = Path(__file__).parents[1]
+    model_file = plugin_root / "models" / "llm" / "gpt-5.6-terra.yaml"
+    model = yaml.safe_load(model_file.read_text(encoding="utf-8"))
+    schema = AIModelEntity.model_validate(model)
+    rules = {rule["name"]: rule for rule in model["parameter_rules"]}
+
+    assert schema.model == "gpt-5.6-terra"
+    assert model["model_properties"]["context_size"] == 360000
+    assert set(rules) == {
+        "response_format",
+        "json_schema",
+        "reasoning_effort",
+        "enable_web_search",
+    }
+    assert rules["reasoning_effort"]["options"] == [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    ]
+    assert "extra" not in model
+
+
+def test_gpt_sol_exposes_only_effective_parameters() -> None:
+    plugin_root = Path(__file__).parents[1]
+    model_file = plugin_root / "models" / "llm" / "gpt-5.6-sol.yaml"
+    model = yaml.safe_load(model_file.read_text(encoding="utf-8"))
+    schema = AIModelEntity.model_validate(model)
+    rules = {rule["name"]: rule for rule in model["parameter_rules"]}
+
+    assert schema.model == "gpt-5.6-sol"
+    assert model["model_properties"]["context_size"] == 360000
+    assert set(rules) == {
+        "response_format",
+        "json_schema",
+        "reasoning_effort",
+        "enable_web_search",
+    }
+    assert rules["reasoning_effort"]["options"] == [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    ]
+    assert rules["enable_web_search"]["default"] is True
+    assert "extra" not in model
+
+
+def test_gpt_55_exposes_only_effective_parameters() -> None:
+    plugin_root = Path(__file__).parents[1]
+    model_file = plugin_root / "models" / "llm" / "gpt-5.5.yaml"
+    model = yaml.safe_load(model_file.read_text(encoding="utf-8"))
+    schema = AIModelEntity.model_validate(model)
+    rules = {rule["name"]: rule for rule in model["parameter_rules"]}
+
+    assert schema.model == "gpt-5.5"
+    assert model["model_properties"]["context_size"] == 260000
+    assert set(rules) == {
+        "response_format",
+        "json_schema",
+        "reasoning_effort",
+        "enable_web_search",
+    }
+    assert rules["reasoning_effort"]["options"] == [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+    ]
+    assert rules["enable_web_search"]["default"] is True
+    assert "extra" not in model
+
+
 def test_minimax_m3_exposes_only_verified_parameters() -> None:
     plugin_root = Path(__file__).parents[1]
     model_file = plugin_root / "models" / "llm" / "MiniMax-M3.yaml"

@@ -42,6 +42,25 @@ def test_responses_system_message_omits_type_and_request_omits_user() -> None:
     assert "user" not in body
 
 
+@pytest.mark.parametrize("model", ["gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra"])
+def test_codex_auth_models_drop_parameters_stripped_by_upstream(model: str) -> None:
+    from models.llm.parameter_conversion import normalize_generation_parameters
+
+    parameters = {
+        "max_tokens": 128000,
+        "max_completion_tokens": 128000,
+        "temperature": 0.4,
+        "top_p": 0.8,
+        "presence_penalty": 1,
+        "frequency_penalty": 1,
+        "reasoning_effort": "max",
+    }
+
+    normalize_generation_parameters(model, parameters)
+
+    assert parameters == {"reasoning_effort": "max"}
+
+
 def test_muse_uses_responses_with_official_capabilities() -> None:
     assert model_family("muse-spark-1.2-contributor") == "openai_responses"
 

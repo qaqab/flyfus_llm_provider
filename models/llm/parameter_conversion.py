@@ -9,6 +9,23 @@ Dify 的模型页面希望使用同一套易理解的参数名，但中转站和
 from typing import Optional
 
 
+_CODEX_AUTH_IGNORED_GENERATION_PARAMETERS = frozenset(
+    {
+        "max_tokens",
+        "max_completion_tokens",
+        "temperature",
+        "top_p",
+        "presence_penalty",
+        "frequency_penalty",
+    }
+)
+_IGNORED_GENERATION_PARAMETERS = {
+    "gpt-5.5": _CODEX_AUTH_IGNORED_GENERATION_PARAMETERS,
+    "gpt-5.6-sol": _CODEX_AUTH_IGNORED_GENERATION_PARAMETERS,
+    "gpt-5.6-terra": _CODEX_AUTH_IGNORED_GENERATION_PARAMETERS,
+}
+
+
 WEB_SEARCH_MODELS = frozenset(
     {
         "grok-4.5",
@@ -42,6 +59,8 @@ def normalize_generation_parameters(model: str, parameters: dict) -> None:
     获得一致结果。模型专属字段，例如思考预算、联网搜索和工具调用，不在本方法
     内处理，原因是它们需要知道后续选择的协议和模型 YAML 配置。
     """
+    for name in _IGNORED_GENERATION_PARAMETERS.get(model.lower(), ()):
+        parameters.pop(name, None)
     normalize_temperature(model, parameters)
     normalize_top_p(model, parameters)
     normalize_response_format(parameters)

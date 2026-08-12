@@ -24,7 +24,9 @@ _ROUTE_PARAMETER_NAMES = frozenset(
         "top_p",
     }
 )
-_REASONING_EFFORT_VALUES = frozenset({"none", "minimal", "low", "medium", "high", "xhigh"})
+_REASONING_EFFORT_VALUES = frozenset(
+    {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+)
 
 
 @dataclass(frozen=True)

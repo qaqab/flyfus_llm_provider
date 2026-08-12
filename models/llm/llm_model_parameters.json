@@ -1,0 +1,771 @@
+[
+  {
+    "model": "deepseek-v4-flash",
+    "parameters": {
+      "max_tokens": {
+        "type": "integer",
+        "min": 1,
+        "max": 384000,
+        "default": 384000
+      },
+      "temperature": {
+        "type": "number",
+        "min": 0,
+        "max": 1.99,
+        "default": 1
+      },
+      "top_p": {
+        "type": "number",
+        "min": 0.01,
+        "max": 1
+      }
+    }
+  },
+  {
+    "model": "deepseek-v4-pro",
+    "parameters": {
+      "max_tokens": {
+        "type": "integer",
+        "min": 1,
+        "max": 384000,
+        "default": 384000
+      },
+      "temperature": {
+        "type": "number",
+        "min": 0,
+        "max": 1.99,
+        "default": 1
+      },
+      "top_p": {
+        "type": "number",
+        "min": 0.01,
+        "max": 1
+      }
+    }
+  },
+  {
+    "model": "gemini-3-flash-preview",
+    "parameters": {
+      "max_tokens": {
+        "type": "integer",
+        "min": 1,
+        "max": 65536,
+        "default": 65536
+      },
+      "temperature": {
+        "type": "number",
+        "min": 0,
+        "max": 2,
+        "default": 1
+      },
+      "top_p": {
+        "type": "number",
+        "min": 0,
+        "max": 1
+      },
+      "reasoning_effort": {
+        "type": "enum",
+        "values": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default": "high"
+      },
+      "enable_web_search": {
+        "type": "boolean",
+        "values": [
+          true,
+          false
+        ],
+        "default": false
+      }
+    }
+  },
+  {
+    "model": "gemini-3.1-pro-preview",
+    "parameters": {
+      "max_tokens": {
+        "type": "integer",
+        "min": 1,
+        "max": 65536,
+        "default": 65536
+      },
+      "temperature": {
+        "type": "number",
+        "min": 0,
+        "max": 2,
+        "default": 1
+      },
+      "top_p": {
+        "type": "number",
+        "min": 0,
+        "max": 1
+      },
+      "reasoning_effort": {
+        "type": "enum",
+        "values": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default": "high"
+      },
+      "enable_web_search": {
+        "type": "boolean",
+        "values": [
+          true,
+          false
+        ],
+        "default": false
+      }
+    }
+  },
+  {
+    "model": "gemini-3.5-flash",
+    "parameters": {
+      "max_tokens": {
+        "type": "integer",
+        "min": 1,
+        "max": 65535,
+        "default": 65535
+      },
+      "temperature": {
+        "type": "number",
+        "min": 0,
+        "max": 2,
+        "default": 1
+      },
+      "top_p": {
+        "type": "number",
+        "min": 0,
+        "max": 1
+      },
+      "reasoning_effort": {
+        "type": "enum",
+        "values": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default": "medium"
+      },
+      "enable_web_search": {
+        "type": "boolean",
+        "values": [
+          true,
+          false
+        ],
+        "default": false
+      }
+    }
+  },
+  {
+    "model": "gemini-3.6-flash",
+    "parameters": {
+      "max_tokens": {
+        "type": "integer",
+        "min": 1,
+        "max": 65536,
+        "default": 65536
+      },
+      "reasoning_effort": {
+        "type": "enum",
+        "values": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default": "medium"
+      },
+      "enable_web_search": {
+        "type": "boolean",
+        "values": [
+          true,
+          false
+        ],
+        "default": false
+      }
+    }
+  },
+  {
+    "model": "glm-5.1",
+    "parameters": {
+      "max_tokens": {
+        "type": "integer",
+        "min": 1,
+        "max": 128000,
+        "default": 128000
+      },
+      "temperature": {
+        "type": "number",
+        "min": 0,
+        "max": 1.99,
+        "default": 1
+      },
+      "top_p": {
+        "type": "number",
+        "min": 0.01,
+        "max": 1
+      },
+      "enable_thinking": {
+        "type": "boolean",
+        "values": [
+          true,
+          false
+        ],
+        "default": false
+      }
+    }
+  },
+  {
+    "model": "glm-5.2",
+    "parameters": {
+      "max_tokens": {
+        "type": "integer",
+        "min": 1,
+        "max": 128000,
+        "default": 128000
+      },
+      "temperature": {
+        "type": "number",
+        "min": 0,
+        "max": 1.99,
+        "default": 1
+      },
+      "top_p": {
+        "type": "number",
+        "min": 0.01,
+        "max": 1
+      },
+      "enable_thinking": {
+        "type": "boolean",
+        "values": [
+          true,
+          false
+        ],
+        "default": false
+      }
+    }
+  },
+  {
+    "model": "grok-4.5",
+    "parameters": {
+      "max_tokens": {
+        "type": "integer",
+        "min": 1,
+        "max": 128000,
+        "default": 128000
+      },
+      "temperature": {
+        "type": "number",
+        "min": 0,
+        "max": 2,
+        "default": 1
+      },
+      "top_p": {
+        "type": "number",
+        "min": 0,
+        "max": 1,
+        "default": 1
+      },
+      "reasoning_effort": {
+        "type": "enum",
+        "values": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "default": "high"
+      },
+      "enable_web_search": {
+        "type": "boolean",
+        "values": [
+          true,
+          false
+        ],
+        "default": true
+      }
+    }
+  },
+  {
+    "model": "gpt-5.4",
+    "parameters": {
+      "max_tokens": {
+        "type": "integer",
+        "min": 1,
+        "max": 128000,
+        "default": 128000
+      },
+      "temperature": {
+        "type": "number",
+        "min": 1,
+        "max": 1,
+        "default": 1
+      },
+      "top_p": {
+        "type": "number",
+        "min": 0,
+        "max": 1
+      },
+      "reasoning_effort": {
+        "type": "enum",
+        "values": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      },
+      "enable_web_search": {
+        "type": "boolean",
+        "values": [
+          true,
+          false
+        ],
+        "default": true
+      }
+    }
+  },
+  {
+    "model": "gpt-5.4-mini",
+    "parameters": {
+      "max_tokens": {
+        "type": "integer",
+        "min": 1,
+        "max": 128000,
+        "default": 128000
+      },
+      "temperature": {
+        "type": "number",
+        "min": 1,
+        "max": 1,
+        "default": 1
+      },
+      "top_p": {
+        "type": "number",
+        "min": 0,
+        "max": 1
+      },
+      "reasoning_effort": {
+        "type": "enum",
+        "values": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      },
+      "enable_web_search": {
+        "type": "boolean",
+        "values": [
+          true,
+          false
+        ],
+        "default": true
+      }
+    }
+  },
+  {
+    "model": "gpt-5.5",
+    "parameters": {
+      "reasoning_effort": {
+        "type": "enum",
+        "values": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      },
+      "enable_web_search": {
+        "type": "boolean",
+        "values": [
+          true,
+          false
+        ],
+        "default": true
+      }
+    }
+  },
+  {
+    "model": "gpt-5.6-luna",
+    "parameters": {
+      "max_tokens": {
+        "type": "integer",
+        "min": 1,
+        "max": 128000,
+        "default": 128000
+      },
+      "temperature": {
+        "type": "number",
+        "min": 1,
+        "max": 1,
+        "default": 1
+      },
+      "top_p": {
+        "type": "number",
+        "min": 0,
+        "max": 1
+      },
+      "reasoning_effort": {
+        "type": "enum",
+        "values": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
+      },
+      "enable_web_search": {
+        "type": "boolean",
+        "values": [
+          true,
+          false
+        ],
+        "default": true
+      }
+    }
+  },
+  {
+    "model": "gpt-5.6-terra",
+    "parameters": {
+      "reasoning_effort": {
+        "type": "enum",
+        "values": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "enable_web_search": {
+        "type": "boolean",
+        "values": [
+          true,
+          false
+        ],
+        "default": true
+      }
+    }
+  },
+  {
+    "model": "gpt-5.6-sol",
+    "parameters": {
+      "reasoning_effort": {
+        "type": "enum",
+        "values": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ]
+      },
+      "enable_web_search": {
+        "type": "boolean",
+        "values": [
+          true,
+          false
+        ],
+        "default": true
+      }
+    }
+  },
+  {
+    "model": "kimi-k2.5",
+    "parameters": {
+      "max_tokens": {
+        "type": "integer",
+        "min": 1,
+        "max": 32768,
+        "default": 32768
+      },
+      "temperature": {
+        "type": "number",
+        "min": 0,
+        "max": 1.99,
+        "default": 1
+      },
+      "top_p": {
+        "type": "number",
+        "min": 0.01,
+        "max": 1
+      },
+      "enable_thinking": {
+        "type": "boolean",
+        "values": [
+          true,
+          false
+        ],
+        "default": false
+      }
+    }
+  },
+  {
+    "model": "minimax-m2.7",
+    "parameters": {
+      "max_tokens": {
+        "type": "integer",
+        "min": 1,
+        "max": 128000,
+        "default": 128000
+      },
+      "temperature": {
+        "type": "number",
+        "min": 0,
+        "max": 1.99,
+        "default": 1
+      },
+      "top_p": {
+        "type": "number",
+        "min": 0.01,
+        "max": 1
+      },
+      "enable_thinking": {
+        "type": "boolean",
+        "values": [
+          true,
+          false
+        ],
+        "default": false
+      }
+    }
+  },
+  {
+    "model": "minimax-m3",
+    "parameters": {
+      "max_tokens": {
+        "type": "integer",
+        "min": 1,
+        "max": 128000,
+        "default": 128000
+      },
+      "temperature": {
+        "type": "number",
+        "min": 0,
+        "max": 1.99,
+        "default": 1
+      },
+      "top_p": {
+        "type": "number",
+        "min": 0.01,
+        "max": 1
+      }
+    }
+  },
+  {
+    "model": "muse-spark-1.2-contributor",
+    "parameters": {
+      "max_tokens": {
+        "type": "integer",
+        "min": 512,
+        "max": 128000,
+        "default": 128000
+      },
+      "temperature": {
+        "type": "number",
+        "min": 0,
+        "max": 2,
+        "default": 1
+      },
+      "top_p": {
+        "type": "number",
+        "min": 0.01,
+        "max": 1
+      },
+      "frequency_penalty": {
+        "type": "number",
+        "min": -2,
+        "max": 2,
+        "default": 0
+      },
+      "presence_penalty": {
+        "type": "number",
+        "min": -2,
+        "max": 2,
+        "default": 0
+      },
+      "reasoning_effort": {
+        "type": "enum",
+        "values": [
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default": "high"
+      },
+      "enable_web_search": {
+        "type": "boolean",
+        "values": [
+          true,
+          false
+        ],
+        "default": false
+      }
+    }
+  },
+  {
+    "model": "qwen3.6-flash",
+    "parameters": {
+      "max_tokens": {
+        "type": "integer",
+        "min": 1,
+        "max": 65536,
+        "default": 65536
+      },
+      "temperature": {
+        "type": "number",
+        "min": 0,
+        "max": 1.99,
+        "default": 1
+      },
+      "top_p": {
+        "type": "number",
+        "min": 0.01,
+        "max": 1
+      },
+      "enable_thinking": {
+        "type": "boolean",
+        "values": [
+          true,
+          false
+        ],
+        "default": false
+      }
+    }
+  },
+  {
+    "model": "qwen3.6-max-preview",
+    "parameters": {
+      "max_tokens": {
+        "type": "integer",
+        "min": 1,
+        "max": 65536,
+        "default": 65536
+      },
+      "temperature": {
+        "type": "number",
+        "min": 0,
+        "max": 1.99,
+        "default": 1
+      },
+      "top_p": {
+        "type": "number",
+        "min": 0.01,
+        "max": 1
+      },
+      "enable_thinking": {
+        "type": "boolean",
+        "values": [
+          true,
+          false
+        ],
+        "default": false
+      }
+    }
+  },
+  {
+    "model": "qwen3.6-plus",
+    "parameters": {
+      "max_tokens": {
+        "type": "integer",
+        "min": 1,
+        "max": 65536,
+        "default": 65536
+      },
+      "temperature": {
+        "type": "number",
+        "min": 0,
+        "max": 1.99,
+        "default": 1
+      },
+      "top_p": {
+        "type": "number",
+        "min": 0.01,
+        "max": 1
+      },
+      "enable_thinking": {
+        "type": "boolean",
+        "values": [
+          true,
+          false
+        ],
+        "default": false
+      }
+    }
+  },
+  {
+    "model": "qwen3.7-max",
+    "parameters": {
+      "max_tokens": {
+        "type": "integer",
+        "min": 1,
+        "max": 65536,
+        "default": 65536
+      },
+      "temperature": {
+        "type": "number",
+        "min": 0,
+        "max": 1.99,
+        "default": 1
+      },
+      "top_p": {
+        "type": "number",
+        "min": 0.01,
+        "max": 1
+      },
+      "enable_thinking": {
+        "type": "boolean",
+        "values": [
+          true,
+          false
+        ],
+        "default": false
+      }
+    }
+  },
+  {
+    "model": "qwen3.7-plus",
+    "parameters": {
+      "max_tokens": {
+        "type": "integer",
+        "min": 1,
+        "max": 65536,
+        "default": 65536
+      },
+      "temperature": {
+        "type": "number",
+        "min": 0,
+        "max": 1.99,
+        "default": 1
+      },
+      "top_p": {
+        "type": "number",
+        "min": 0.01,
+        "max": 1
+      },
+      "enable_thinking": {
+        "type": "boolean",
+        "values": [
+          true,
+          false
+        ],
+        "default": false
+      }
+    }
+  }
+]

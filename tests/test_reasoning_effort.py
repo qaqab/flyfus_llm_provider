@@ -8,7 +8,8 @@ from models.llm.llm import (
     _GeminiRetryExhaustedError,
 )
 from models.llm.native.gemini import GeminiNativeDocumentAdapter
-from dify_plugin.entities.model.message import UserPromptMessage
+from models.llm.reasoning_effort import reasoning_effort_from_tool_messages
+from dify_plugin.entities.model.message import ToolPromptMessage, UserPromptMessage
 from dify_plugin.errors.model import InvokeError
 
 
@@ -42,6 +43,18 @@ def test_set_next_step_effort_maps_to_gemini_thinking_level(
 
     assert "reasoning_effort" not in parameters
     assert body["generationConfig"]["thinkingConfig"]["thinkingLevel"] == thinking_level
+
+
+def test_set_next_step_accepts_max_effort() -> None:
+    messages = [
+        ToolPromptMessage(
+            name="set_next_step",
+            tool_call_id="call-1",
+            content='{"reasoning_effort":"max"}',
+        )
+    ]
+
+    assert reasoning_effort_from_tool_messages(messages) == "max"
 
 
 def test_gemini_retry_reason_covers_empty_and_malformed_responses() -> None:

@@ -7,7 +7,7 @@ from dify_plugin.entities.model.message import PromptMessage, ToolPromptMessage
 
 
 _REASONING_EFFORT_TOOL_NAME = "set_next_step"
-_REASONING_EFFORT_VALUES = {"low", "medium", "high", "xhigh"}
+_REASONING_EFFORT_VALUES = {"low", "medium", "high", "xhigh", "max"}
 
 
 def reasoning_effort_from_tool_messages(prompt_messages: list[PromptMessage]) -> Optional[str]:
