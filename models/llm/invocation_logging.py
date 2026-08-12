@@ -213,7 +213,11 @@ class InvocationLog:
         write_invocation_log(self.credentials, event)
 
 
-def wrap_stream_with_invocation_log(stream_result, invocation_log: InvocationLog, usage_reporter=None):
+def wrap_stream_with_invocation_log(
+    stream_result,
+    invocation_log: InvocationLog,
+    usage_reporter=None,
+):
     chunk_count = 0
     output_parts: list[str] = []
     usage = None
@@ -234,6 +238,7 @@ def wrap_stream_with_invocation_log(stream_result, invocation_log: InvocationLog
         invocation_log.failure(error)
         invocation_log.set_response(
             output_text="".join(output_parts),
+            partial_output=chunk_count > 0,
         )
         invocation_log.event("stream_error", chunk_count=chunk_count, output_text="".join(output_parts))
         raise InvokeError(failure_output_text(invocation_log, error)) from error
@@ -257,6 +262,7 @@ def failure_output_text(invocation_log: InvocationLog, error: BaseException) -> 
     response = invocation_log.response
     upstream_headers = _nested_get(response, "http", "headers") or {}
     partial_output_characters = len(str(response.get("output_text") or ""))
+    partial_output = bool(response.get("partial_output")) or partial_output_characters > 0
     raw_error = response.get("error") or response.get("error_body")
     if raw_error is None:
         raw_error = repr(error.__cause__ or error)
@@ -285,7 +291,7 @@ def failure_output_text(invocation_log: InvocationLog, error: BaseException) -> 
         "type": getattr(error, "flyfus_error_type", "model_error"),
         "user_message": getattr(error, "flyfus_user_message", "模型服务暂时不可用，请稍后重试。"),
         "retryable": bool(getattr(error, "flyfus_retryable", False)),
-        "partial_output": partial_output_characters > 0,
+        "partial_output": partial_output,
         "log_id": invocation_log.invocation_id,
         "invocation_id": invocation_log.invocation_id,
         "request_id": invocation_log.invocation_id,

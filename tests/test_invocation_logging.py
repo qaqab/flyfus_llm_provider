@@ -1,7 +1,6 @@
 import json
 
 import pytest
-
 from dify_plugin.errors.model import InvokeError
 
 from models.llm import invocation_logging, sls_logging
@@ -17,7 +16,7 @@ def _error_payload(message: str) -> dict:
     return json.loads(message[len(prefix) : -len(suffix)])
 
 
-def test_stream_failure_is_logged_and_raised_for_dify_retry(monkeypatch) -> None:
+def test_stream_failure_is_logged_and_raised_as_error_envelope(monkeypatch) -> None:
     captured = {}
     monkeypatch.setattr(
         invocation_logging,
@@ -37,10 +36,10 @@ def test_stream_failure_is_logged_and_raised_for_dify_retry(monkeypatch) -> None
         raise RuntimeError("upstream read timed out")
         yield
 
-    with pytest.raises(InvokeError) as raised:
+    with pytest.raises(InvokeError) as exc_info:
         list(wrap_stream_with_invocation_log(failing_stream(), log))
 
-    message = str(raised.value)
+    message = str(exc_info.value)
     payload = _error_payload(message)
     error_details = payload.pop("error")
     assert payload == {
@@ -59,7 +58,7 @@ def test_stream_failure_is_logged_and_raised_for_dify_retry(monkeypatch) -> None
     assert "model: gemini-3.6-flash" in error_details
     assert "error_type: RuntimeError" in error_details
     assert "error: upstream read timed out" in error_details
-    assert isinstance(raised.value.__cause__, RuntimeError)
+    assert payload["log_id"] == log.invocation_id
     assert captured["event"]["status"] == "error"
     assert captured["event"]["timeline"][-1]["name"] == "stream_error"
 
@@ -88,10 +87,10 @@ def test_recognized_stream_failure_uses_specific_flyfus_error_type(monkeypatch) 
         raise _RetryableStreamError("missing response.completed")
         yield
 
-    with pytest.raises(InvokeError) as raised:
+    with pytest.raises(InvokeError) as exc_info:
         list(wrap_stream_with_invocation_log(failing_stream(), log))
 
-    payload = _error_payload(str(raised.value))
+    payload = _error_payload(str(exc_info.value))
     error_details = payload.pop("error")
     assert payload == {
         "type": "upstream_stream_incomplete",
@@ -111,6 +110,27 @@ def test_recognized_stream_failure_uses_specific_flyfus_error_type(monkeypatch) 
     assert "retry_count: 3" in error_details
     assert "error_type: _RetryableStreamError" in error_details
     assert "error: missing response.completed" in error_details
+
+
+def test_partial_stream_failure_preserves_chunks_then_raises_error_envelope(monkeypatch) -> None:
+    monkeypatch.setattr(invocation_logging, "write_invocation_log", lambda *_args: None)
+    log = InvocationLog(model="gpt-5.6-sol", credentials={}, stream=True, user="user-1")
+
+    class Chunk:
+        delta = None
+
+    def failing_stream():
+        yield Chunk()
+        raise RuntimeError("stream disconnected")
+
+    stream = wrap_stream_with_invocation_log(failing_stream(), log)
+    assert isinstance(next(stream), Chunk)
+    with pytest.raises(InvokeError) as exc_info:
+        next(stream)
+
+    payload = _error_payload(str(exc_info.value))
+    assert payload["partial_output"] is True
+    assert payload["log_id"] == log.invocation_id
 
 
 def test_invocation_event_exposes_model_route_fields(monkeypatch) -> None:

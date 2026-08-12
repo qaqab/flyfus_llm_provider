@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.60
+
+- Raise terminal model failures as Dify `InvokeError` exceptions after configured retries are exhausted, with the complete `<FLYFUS_ERROR>` envelope in the error message.
+- Make failed model nodes visibly fail in Dify while allowing failure branches to parse `error_message` and display the envelope's `user_message`.
+
 ## 0.0.52
 
 - Correct Muse Spark Contributor to Meta's documented 1,048,576-token context window and official pricing.

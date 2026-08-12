@@ -1,6 +1,6 @@
 # Flyfus LLM Error Protocol
 
-Runtime model failures remain Dify errors. The error message contains one envelope:
+Runtime model failures are raised to Dify as an `InvokeError` whose message is one machine-readable envelope:
 
 ```text
 <FLYFUS_ERROR>{...valid JSON...}</FLYFUS_ERROR>
@@ -49,14 +49,17 @@ capped at ten seconds.
 `retry_count` in the diagnostic text counts model request retries recorded as `request_retry`,
 `stream_retry`, `gemini_retry`, or `context_guard_retry`.
 
+This makes the Dify node fail visibly. Workflows that must continue should enable a failure branch and read
+the envelope from `error_message`.
+
 ## Partial output
 
-The plugin cannot retract chunks already sent to Dify. When `partial_output` is `true`, a client should not
-present those chunks as a complete answer. It may hide them or label them as incomplete, then display
-`user_message`.
+The plugin cannot retract chunks already sent to Dify. When `partial_output` is `true`, Dify may already have
+streamed preceding chunks before the invocation is marked failed. A client should not present those chunks as
+a complete answer. It may hide them or label them as incomplete, then display `user_message` from the error.
 
 ## Parsing
 
-Dify may wrap the envelope inside its own serialized `description` and `message` fields. Consumers should
-search the complete error string for the first `<FLYFUS_ERROR>...</FLYFUS_ERROR>` block, parse the enclosed
-JSON, and deduplicate repeated wrappers by `log_id`.
+Dify may wrap the envelope inside serialized `description`, `message`, or `error_message` fields. Consumers
+should search the complete error response for the first `<FLYFUS_ERROR>...</FLYFUS_ERROR>` block, parse the
+enclosed JSON, and deduplicate repeated wrappers by `log_id`.
