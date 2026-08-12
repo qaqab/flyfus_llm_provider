@@ -12,6 +12,7 @@ from dify_plugin.entities.model.message import (
     UserPromptMessage,
 )
 from dify_plugin.errors.model import InvokeError
+from models.llm.llm import FlyfusLargeLanguageModel
 
 
 def _adapter() -> OpenAIResponsesAdapter:
@@ -208,15 +209,21 @@ def test_responses_request_retries_server_error_once(monkeypatch) -> None:
     first = Response(503, "temporarily unavailable")
     second = Response(200)
     responses = iter([first, second])
-    monkeypatch.setattr(
-        "models.llm.native.openai_responses.requests.post",
-        lambda *_args, **_kwargs: next(responses),
-    )
-    invocation_log = InvocationLog()
+    request_ids = []
 
-    result = _adapter()._open_response(
+    def post(*_args, **kwargs):
+        request_ids.append(kwargs["headers"]["x-request-id"])
+        return next(responses)
+
+    monkeypatch.setattr("models.llm.native.openai_responses.requests.post", post)
+    invocation_log = InvocationLog()
+    adapter = _adapter()
+    model = object.__new__(FlyfusLargeLanguageModel)
+    adapter._request_headers = model._request_headers
+
+    result = adapter._open_response(
         model="gpt-5.6-sol",
-        credentials={},
+        credentials={"_flyfus_invocation_id": "invocation-123"},
         request_body={"model": "gpt-5.6-sol"},
         stream=True,
         invocation_log=invocation_log,
@@ -226,6 +233,7 @@ def test_responses_request_retries_server_error_once(monkeypatch) -> None:
     assert first.closed is True
     assert invocation_log.events[0]["name"] == "request_retry"
     assert invocation_log.events[0]["reason"] == "upstream_server_error"
+    assert request_ids[0] != request_ids[1]
 
 
 def test_responses_request_does_not_retry_bad_request(monkeypatch) -> None:

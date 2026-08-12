@@ -74,11 +74,10 @@ class GeminiNativeDocumentAdapter:
         params = {"key": credentials["api_key"]}
         if stream:
             params["alt"] = "sse"
-        request_headers = self._request_headers(credentials)
-        request_headers.pop("Authorization", None)
-
         for attempt in range(2):
             try:
+                request_headers = self._request_headers(credentials)
+                request_headers.pop("Authorization", None)
                 response = requests.post(
                     request_url,
                     headers=request_headers,

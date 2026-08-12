@@ -1,4 +1,5 @@
 import json
+import uuid
 from copy import deepcopy
 from contextvars import ContextVar
 from contextlib import suppress
@@ -184,7 +185,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
             headers["Authorization"] = f"Bearer {credentials['api_key']}"
         invocation_id = credentials.get("_flyfus_invocation_id")
         if invocation_id:
-            headers["x-request-id"] = invocation_id
+            headers["x-request-id"] = str(uuid.uuid4())
             headers["X-Client-Request-Id"] = invocation_id
             headers["X-Flyfus-Invocation-Id"] = invocation_id
         return headers

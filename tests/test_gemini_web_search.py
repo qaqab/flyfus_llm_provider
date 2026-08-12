@@ -11,6 +11,7 @@ from models.llm.agent_context import _extract_context_urls, inject_context_from_
 from dify_plugin.entities.model.llm import LLMUsage
 from dify_plugin.entities.model.message import AssistantPromptMessage, ToolPromptMessage, UserPromptMessage
 from dify_plugin.errors.model import InvokeError
+from models.llm.llm import FlyfusLargeLanguageModel
 
 
 def _adapter(request_headers=None) -> GeminiNativeDocumentAdapter:
@@ -112,15 +113,20 @@ def test_native_gemini_request_retries_server_error_once(monkeypatch) -> None:
         },
     )
     responses = iter([first, second])
-    monkeypatch.setattr(
-        "models.llm.native.gemini.requests.post",
-        lambda *_args, **_kwargs: next(responses),
-    )
-    invocation_log = _InvocationLog()
+    request_ids = []
 
-    result = _adapter().invoke(
+    def post(*_args, **kwargs):
+        request_ids.append(kwargs["headers"]["x-request-id"])
+        return next(responses)
+
+    monkeypatch.setattr("models.llm.native.gemini.requests.post", post)
+    invocation_log = _InvocationLog()
+    model = object.__new__(FlyfusLargeLanguageModel)
+    adapter = _adapter(request_headers=model._request_headers)
+
+    result = adapter.invoke(
         model="gemini-3.6-flash",
-        credentials={"api_key": "key"},
+        credentials={"api_key": "key", "_flyfus_invocation_id": "invocation-123"},
         prompt_messages=[UserPromptMessage(content="hello")],
         model_parameters={},
         tools=None,
@@ -134,6 +140,7 @@ def test_native_gemini_request_retries_server_error_once(monkeypatch) -> None:
     assert first.closed is True
     assert invocation_log.events[0]["name"] == "request_retry"
     assert invocation_log.events[0]["reason"] == "upstream_server_error"
+    assert request_ids[0] != request_ids[1]
 
 
 def test_native_gemini_records_non_stream_response_id() -> None:
