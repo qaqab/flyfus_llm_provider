@@ -1,8 +1,11 @@
+import hashlib
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from typing import Any, Callable, Generator, Optional, Union
+from urllib.parse import urlparse
 
 import requests
 
@@ -32,6 +35,10 @@ from models.llm.errors import (
 )
 from models.llm.native.base import file_bytes
 from models.llm.parameter_conversion import build_web_search_tool
+
+
+_MUSE_MODEL = "muse-spark-1.2-contributor"
+_TRUSTED_IMAGE_HOST = "o1.flyfus.com"
 
 
 class _RetryableStreamError(FlyfusInvokeError):
@@ -87,17 +94,20 @@ class OpenAIResponsesAdapter:
         stream: bool,
         user: Optional[str],
         invocation_log=None,
+        request_body: Optional[dict] = None,
     ) -> Union[LLMResult, Generator]:
-        request_body = self._build_body(
-            model=model,
-            credentials=credentials,
-            prompt_messages=prompt_messages,
-            model_parameters=model_parameters,
-            tools=tools,
-            stop=stop,
-            stream=stream,
-            user=user,
-        )
+        if request_body is None:
+            request_body = self._build_body(
+                model=model,
+                credentials=credentials,
+                prompt_messages=prompt_messages,
+                model_parameters=model_parameters,
+                tools=tools,
+                stop=stop,
+                stream=stream,
+                user=user,
+                invocation_log=invocation_log,
+            )
         if invocation_log is not None:
             invocation_log.set_replay_request(
                 endpoint=self._endpoint_url(credentials, "responses"),
@@ -225,11 +235,19 @@ class OpenAIResponsesAdapter:
         stop: Optional[list[str]],
         stream: bool,
         user: Optional[str],
+        invocation_log=None,
+        mirrored_image_cache: Optional[dict[str, str]] = None,
     ) -> dict:
         normalized_parameters = self._normalize_model_parameters(model, model_parameters)
         body: dict[str, Any] = {
             "model": model,
-            "input": self._convert_messages(model, credentials, prompt_messages),
+            "input": self._convert_messages(
+                model,
+                credentials,
+                prompt_messages,
+                invocation_log,
+                mirrored_image_cache,
+            ),
             "stream": stream,
         }
 
@@ -266,7 +284,21 @@ class OpenAIResponsesAdapter:
 
         return body
 
-    def _convert_messages(self, model: str, credentials: dict, prompt_messages: list[PromptMessage]) -> list[dict]:
+    def _convert_messages(
+        self,
+        model: str,
+        credentials: dict,
+        prompt_messages: list[PromptMessage],
+        invocation_log=None,
+        mirrored_image_cache: Optional[dict[str, str]] = None,
+    ) -> list[dict]:
+        mirrored_image_urls = self._mirror_muse_image_urls(
+            model,
+            credentials,
+            prompt_messages,
+            invocation_log,
+            mirrored_image_cache,
+        )
         input_items: list[dict] = []
         for message in prompt_messages:
             if isinstance(message, SystemPromptMessage):
@@ -281,7 +313,12 @@ class OpenAIResponsesAdapter:
                     {
                         "type": "message",
                         "role": "user",
-                        "content": self._user_content_parts(model, credentials, message.content),
+                        "content": self._user_content_parts(
+                            model,
+                            credentials,
+                            message.content,
+                            mirrored_image_urls,
+                        ),
                     }
                 )
             elif isinstance(message, AssistantPromptMessage):
@@ -325,7 +362,13 @@ class OpenAIResponsesAdapter:
             )
         return ""
 
-    def _user_content_parts(self, model: str, credentials: dict, content: object) -> str | list[dict]:
+    def _user_content_parts(
+        self,
+        model: str,
+        credentials: dict,
+        content: object,
+        mirrored_image_urls: Optional[dict[str, str]] = None,
+    ) -> str | list[dict]:
         if isinstance(content, str):
             return content
         if not isinstance(content, list):
@@ -338,7 +381,10 @@ class OpenAIResponsesAdapter:
                 content_parts.append({"type": "input_text", "text": text_part.data})
             elif part.type == PromptMessageContentType.IMAGE and self._supports_attachments(model):
                 image_part: ImagePromptMessageContent = part
-                item = {"type": "input_image", "image_url": image_part.data}
+                image_url = image_part.data
+                if mirrored_image_urls:
+                    image_url = mirrored_image_urls.get(image_url, image_url)
+                item = {"type": "input_image", "image_url": image_url}
                 if image_part.detail:
                     item["detail"] = image_part.detail.value
                 content_parts.append(item)
@@ -367,6 +413,230 @@ class OpenAIResponsesAdapter:
                         }
                     )
         return content_parts
+
+    def _mirror_muse_image_urls(
+        self,
+        model: str,
+        credentials: dict,
+        prompt_messages: list[PromptMessage],
+        invocation_log=None,
+        mirrored_image_cache: Optional[dict[str, str]] = None,
+    ) -> dict[str, str]:
+        if model.lower() != _MUSE_MODEL:
+            return {}
+
+        cache = mirrored_image_cache if mirrored_image_cache is not None else {}
+        image_urls: list[tuple[str, int]] = []
+        total_image_count = 0
+        external_image_count = 0
+        skipped_o1_count = 0
+        cached_external_count = 0
+        for message in prompt_messages:
+            if not isinstance(message, UserPromptMessage) or not isinstance(
+                message.content, list
+            ):
+                continue
+            for part in message.content:
+                if getattr(part, "type", None) != PromptMessageContentType.IMAGE:
+                    continue
+                total_image_count += 1
+                image_url = str(getattr(part, "data", "") or "").strip()
+                parsed_url = urlparse(image_url)
+                if parsed_url.scheme not in {"http", "https"}:
+                    continue
+                if (parsed_url.hostname or "").lower() == _TRUSTED_IMAGE_HOST:
+                    skipped_o1_count += 1
+                    continue
+                external_image_count += 1
+                if image_url in cache:
+                    cached_external_count += 1
+                    continue
+                if all(existing_url != image_url for existing_url, _ in image_urls):
+                    image_urls.append((image_url, total_image_count))
+
+        if not image_urls:
+            if invocation_log is not None and total_image_count:
+                invocation_log.event(
+                    "image_mirror_batch_skipped",
+                    image_count=total_image_count,
+                    external_image_count=external_image_count,
+                    cached_external_count=cached_external_count,
+                    skipped_o1_count=skipped_o1_count,
+                    reason=(
+                        "all_external_images_cached"
+                        if external_image_count
+                        else "no_external_image_urls"
+                    ),
+                )
+            return cache
+
+        batch_started_at = time.monotonic()
+        if invocation_log is not None:
+            invocation_log.event(
+                "image_mirror_batch_started",
+                image_count=total_image_count,
+                external_image_count=external_image_count,
+                unique_external_image_count=len(image_urls),
+                duplicate_or_cached_external_image_count=(
+                    external_image_count - len(image_urls)
+                ),
+                skipped_o1_count=skipped_o1_count,
+                max_workers=len(image_urls),
+            )
+
+        try:
+            with ThreadPoolExecutor(max_workers=len(image_urls)) as executor:
+                mirrored_urls = executor.map(
+                    lambda item: self._upload_image_url_to_oss(
+                        credentials,
+                        item[0],
+                        image_index=item[1],
+                        invocation_log=invocation_log,
+                    ),
+                    image_urls,
+                )
+                new_mappings = dict(
+                    zip(
+                        (image_url for image_url, _ in image_urls),
+                        mirrored_urls,
+                        strict=True,
+                    )
+                )
+        except Exception as error:
+            if invocation_log is not None:
+                invocation_log.event(
+                    "image_mirror_batch_failed",
+                    unique_external_image_count=len(image_urls),
+                    duration_ms=round(
+                        (time.monotonic() - batch_started_at) * 1000
+                    ),
+                    error_type=type(error).__name__,
+                    error=str(error),
+                )
+            raise
+
+        cache.update(new_mappings)
+        if invocation_log is not None:
+            invocation_log.event(
+                "image_mirror_batch_completed",
+                unique_external_image_count=len(new_mappings),
+                duration_ms=round((time.monotonic() - batch_started_at) * 1000),
+            )
+        return cache
+
+    @staticmethod
+    def _upload_image_url_to_oss(
+        credentials: dict,
+        image_url: str,
+        *,
+        image_index: int,
+        invocation_log=None,
+    ) -> str:
+        base_url = str(credentials.get("oss_api_base_url") or "").strip().rstrip("/")
+        token = str(credentials.get("oss_api_token") or "").strip()
+        if not base_url or not token:
+            raise InvokeError("Muse 图片转存需要配置 OSS API 地址和 Token。")
+
+        safe_source_url = urlparse(image_url)._replace(query="", fragment="").geturl()
+        source_url_sha256 = hashlib.sha256(image_url.encode("utf-8")).hexdigest()
+        started_at = time.monotonic()
+        try:
+            response = requests.post(
+                f"{base_url}/v1/oss-assets/image-url/upload",
+                headers={
+                    "Accept": "application/json",
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json={"image_url": image_url},
+                timeout=(10, 120),
+                allow_redirects=False,
+            )
+        except requests.RequestException as error:
+            if invocation_log is not None:
+                invocation_log.event(
+                    "image_mirror_item_failed",
+                    image_index=image_index,
+                    source_url=safe_source_url,
+                    source_url_sha256=source_url_sha256,
+                    duration_ms=round((time.monotonic() - started_at) * 1000),
+                    error_type=type(error).__name__,
+                )
+            raise InvokeError(
+                f"Muse 第 {image_index} 张图片转存请求失败：{type(error).__name__}"
+            ) from error
+
+        request_id = (
+            response.headers.get("x-request-id")
+            or response.headers.get("x-fc-request-id")
+            or ""
+        )
+        if not 200 <= response.status_code < 300:
+            if invocation_log is not None:
+                invocation_log.event(
+                    "image_mirror_item_failed",
+                    image_index=image_index,
+                    source_url=safe_source_url,
+                    source_url_sha256=source_url_sha256,
+                    status_code=response.status_code,
+                    request_id=request_id or None,
+                    duration_ms=round((time.monotonic() - started_at) * 1000),
+                    response_body_head=response.text[:500],
+                )
+            raise InvokeError(
+                f"Muse 第 {image_index} 张图片转存失败，状态码："
+                f"{response.status_code}，request_id={request_id or '-'}"
+            )
+
+        try:
+            response_data = response.json()["data"]
+            public_url = response_data["public_url"]
+        except (KeyError, TypeError, ValueError, requests.JSONDecodeError):
+            if invocation_log is not None:
+                invocation_log.event(
+                    "image_mirror_item_failed",
+                    image_index=image_index,
+                    source_url=safe_source_url,
+                    source_url_sha256=source_url_sha256,
+                    status_code=response.status_code,
+                    request_id=request_id or None,
+                    duration_ms=round((time.monotonic() - started_at) * 1000),
+                    error_type="invalid_response",
+                )
+            raise InvokeError(f"Muse 第 {image_index} 张图片转存返回格式无效。") from None
+
+        if not isinstance(public_url, str) or (
+            urlparse(public_url).hostname or ""
+        ).lower() != _TRUSTED_IMAGE_HOST:
+            if invocation_log is not None:
+                invocation_log.event(
+                    "image_mirror_item_failed",
+                    image_index=image_index,
+                    source_url=safe_source_url,
+                    source_url_sha256=source_url_sha256,
+                    status_code=response.status_code,
+                    request_id=request_id or None,
+                    duration_ms=round((time.monotonic() - started_at) * 1000),
+                    error_type="untrusted_public_url",
+                )
+            raise InvokeError(
+                f"Muse 第 {image_index} 张图片转存未返回可信的 o1.flyfus.com 地址。"
+            )
+
+        if invocation_log is not None:
+            invocation_log.event(
+                "image_mirror_item_completed",
+                image_index=image_index,
+                source_url=safe_source_url,
+                source_url_sha256=source_url_sha256,
+                target_url=public_url,
+                status_code=response.status_code,
+                request_id=request_id or None,
+                file_size=response_data.get("file_size"),
+                file_ext=response_data.get("file_ext"),
+                duration_ms=round((time.monotonic() - started_at) * 1000),
+            )
+        return public_url
 
     @staticmethod
     def _validate_document_input(model: str, document: DocumentPromptMessageContent) -> None:

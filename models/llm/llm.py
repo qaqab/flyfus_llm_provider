@@ -901,41 +901,61 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
 
             if family == "openai_responses":
                 responses_adapter = self._openai_responses_adapter()
-                upstream_request_body = responses_adapter._build_body(
-                    model=model,
-                    credentials=normalized_credentials,
-                    prompt_messages=prompt_messages,
-                    model_parameters=dict(effective_model_parameters),
-                    tools=tools,
-                    stop=stop,
-                    stream=stream,
-                    user=None,
-                )
-                invocation_log.set_request(
-                    model_parameters_final=effective_model_parameters,
-                    adapter="openai_responses",
-                    upstream_request={
-                        "endpoint": self._endpoint_url(normalized_credentials, "responses"),
-                        "headers": {
-                            key: value
-                            for key, value in self._request_headers(normalized_credentials).items()
-                            if key.lower() != "authorization"
-                        },
-                        "body_summary": {
-                            "model": upstream_request_body.get("model"),
-                            "stream": upstream_request_body.get("stream"),
-                            "temperature": upstream_request_body.get("temperature"),
-                            "max_output_tokens": upstream_request_body.get("max_output_tokens"),
-                            "input_count": len(upstream_request_body.get("input") or []),
-                            "tool_count": len(upstream_request_body.get("tools") or []),
-                            "tool_choice": upstream_request_body.get("tool_choice"),
-                            "has_text_format": bool(upstream_request_body.get("text")),
-                        },
-                        "input_count": len(upstream_request_body.get("input") or []),
-                        "tool_count": len(upstream_request_body.get("tools") or []),
-                    },
-                )
+                mirrored_image_cache: dict[str, str] = {}
+
                 def invoke_openai_responses():
+                    upstream_request_body = responses_adapter._build_body(
+                        model=model,
+                        credentials=normalized_credentials,
+                        prompt_messages=prompt_messages,
+                        model_parameters=dict(effective_model_parameters),
+                        tools=tools,
+                        stop=stop,
+                        stream=stream,
+                        user=None,
+                        invocation_log=invocation_log,
+                        mirrored_image_cache=mirrored_image_cache,
+                    )
+                    invocation_log.set_request(
+                        model_parameters_final=effective_model_parameters,
+                        adapter="openai_responses",
+                        upstream_request={
+                            "endpoint": self._endpoint_url(
+                                normalized_credentials, "responses"
+                            ),
+                            "headers": {
+                                key: value
+                                for key, value in self._request_headers(
+                                    normalized_credentials
+                                ).items()
+                                if key.lower() != "authorization"
+                            },
+                            "body_summary": {
+                                "model": upstream_request_body.get("model"),
+                                "stream": upstream_request_body.get("stream"),
+                                "temperature": upstream_request_body.get("temperature"),
+                                "max_output_tokens": upstream_request_body.get(
+                                    "max_output_tokens"
+                                ),
+                                "input_count": len(
+                                    upstream_request_body.get("input") or []
+                                ),
+                                "tool_count": len(
+                                    upstream_request_body.get("tools") or []
+                                ),
+                                "tool_choice": upstream_request_body.get("tool_choice"),
+                                "has_text_format": bool(
+                                    upstream_request_body.get("text")
+                                ),
+                            },
+                            "input_count": len(
+                                upstream_request_body.get("input") or []
+                            ),
+                            "tool_count": len(
+                                upstream_request_body.get("tools") or []
+                            ),
+                        },
+                    )
                     with invocation_log.step("upstream_request", adapter="openai_responses"):
                         return responses_adapter.invoke(
                             model=model,
@@ -947,6 +967,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                             stream=stream,
                             user=None,
                             invocation_log=invocation_log,
+                            request_body=upstream_request_body,
                         )
 
                 if stream:

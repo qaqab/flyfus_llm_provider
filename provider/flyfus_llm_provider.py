@@ -13,6 +13,8 @@ class FlyfusLLMProvider(ModelProvider):
         if not credentials.get("api_key"):
             raise CredentialsValidateFailedError("请填写 API Key")
         required_credentials = {
+            "oss_api_base_url": "请填写 OSS API 基础地址",
+            "oss_api_token": "请填写 OSS API Token",
             "sls_endpoint": "请填写 SLS 地址",
             "sls_project": "请填写 SLS 项目",
             "sls_access_key_id": "请填写 SLS AccessKey ID",

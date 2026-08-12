@@ -32,6 +32,24 @@ provider_credential_schema:
       placeholder:
         en_US: Base URL, e.g. https://openapi.flyposter.ai/v1
         zh_Hans: Base URL，例如 https://openapi.flyposter.ai/v1
+    - variable: oss_api_base_url
+      label:
+        en_US: OSS API base URL
+        zh_Hans: OSS API 基础地址
+      type: text-input
+      required: true
+      placeholder:
+        en_US: Enter OSS API base URL
+        zh_Hans: 输入 OSS API 基础地址
+    - variable: oss_api_token
+      label:
+        en_US: OSS API Token
+        zh_Hans: OSS API Token
+      type: secret-input
+      required: true
+      placeholder:
+        en_US: Enter OSS API Token
+        zh_Hans: 输入 OSS API Token
     - variable: sls_endpoint
       label:
         en_US: SLS Endpoint
