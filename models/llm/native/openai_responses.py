@@ -267,7 +267,7 @@ class OpenAIResponsesAdapter:
                 body[target_name] = normalized_parameters[source_name]
 
         reasoning_effort = normalized_parameters.get("reasoning_effort")
-        if reasoning_effort and reasoning_effort != "none":
+        if reasoning_effort:
             body["reasoning"] = {"effort": reasoning_effort}
 
         text_format = self._text_format(normalized_parameters)

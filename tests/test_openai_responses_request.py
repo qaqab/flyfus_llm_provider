@@ -43,6 +43,28 @@ def test_responses_system_message_omits_type_and_request_omits_user() -> None:
     assert "user" not in body
 
 
+def test_ling_responses_uses_output_budget_and_explicit_none_effort() -> None:
+    body = _adapter()._build_body(
+        model="ling-3.0-flash",
+        credentials={},
+        prompt_messages=[SystemPromptMessage(content="You are helpful.")],
+        model_parameters={
+            "max_completion_tokens": 32768,
+            "reasoning_effort": "none",
+            "response_format": "json_object",
+        },
+        tools=None,
+        stop=None,
+        stream=False,
+        user=None,
+    )
+
+    assert model_family("ling-3.0-flash") == "openai_responses"
+    assert body["max_output_tokens"] == 32768
+    assert body["reasoning"] == {"effort": "none"}
+    assert body["text"]["format"] == {"type": "json_object"}
+
+
 @pytest.mark.parametrize("model", ["gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra"])
 def test_codex_auth_models_drop_parameters_stripped_by_upstream(model: str) -> None:
     from models.llm.parameter_conversion import normalize_generation_parameters

@@ -141,6 +141,49 @@ def test_gemini_flash_models_expose_verified_parameters() -> None:
         assert ("enable_web_search" in rules) is expected["web_search"]
 
 
+def test_ling_flash_exposes_only_verified_capabilities() -> None:
+    plugin_root = Path(__file__).parents[1]
+    model_file = plugin_root / "models" / "llm" / "ling-3.0-flash.yaml"
+    model = yaml.safe_load(model_file.read_text(encoding="utf-8"))
+    schema = AIModelEntity.model_validate(model)
+    rules = {rule["name"]: rule for rule in model["parameter_rules"]}
+
+    assert schema.model == "ling-3.0-flash"
+    assert model["features"] == [
+        "agent-thought",
+        "tool-call",
+        "multi-tool-call",
+        "stream-tool-call",
+    ]
+    assert model["model_properties"]["context_size"] == 262144
+    assert set(rules) == {
+        "temperature",
+        "top_p",
+        "frequency_penalty",
+        "presence_penalty",
+        "max_tokens",
+        "response_format",
+        "reasoning_effort",
+    }
+    assert rules["response_format"]["options"] == ["text", "json_object"]
+    assert rules["max_tokens"]["default"] == 32768
+    assert rules["max_tokens"]["max"] == 32768
+    assert rules["reasoning_effort"]["options"] == [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+    ]
+    assert "enable_thinking" not in rules
+    assert model["extra"]["token_param_name"] == "max_completion_tokens"
+
+    position = yaml.safe_load(
+        (plugin_root / "models" / "llm" / "_position.yaml").read_text(encoding="utf-8")
+    )
+    assert position.count("ling-3.0-flash") == 1
+
+
 def test_minimax_m3_exposes_only_verified_parameters() -> None:
     plugin_root = Path(__file__).parents[1]
     model_file = plugin_root / "models" / "llm" / "MiniMax-M3.yaml"
