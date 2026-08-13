@@ -16,6 +16,7 @@ from dify_plugin.errors.model import InvokeError
 @pytest.mark.parametrize(
     ("reasoning_effort", "thinking_level"),
     [
+        ("minimal", "Minimal"),
         ("low", "Low"),
         ("medium", "Medium"),
         ("high", "High"),

@@ -417,6 +417,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
         elif mode == "gemini":
             reasoning_effort = model_parameters.pop("reasoning_effort", None)
             thinking_level = {
+                "minimal": "Minimal",
                 "low": "Low",
                 "medium": "Medium",
                 "high": "High",

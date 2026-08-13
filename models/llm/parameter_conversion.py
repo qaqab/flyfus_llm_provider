@@ -19,7 +19,12 @@ _CODEX_AUTH_IGNORED_GENERATION_PARAMETERS = frozenset(
         "frequency_penalty",
     }
 )
+_GEMINI_AUTH_IGNORED_GENERATION_PARAMETERS = frozenset(
+    {"max_tokens", "max_completion_tokens", "include_thoughts"}
+)
 _IGNORED_GENERATION_PARAMETERS = {
+    "gemini-3.5-flash": _GEMINI_AUTH_IGNORED_GENERATION_PARAMETERS | {"enable_web_search"},
+    "gemini-3.6-flash": _GEMINI_AUTH_IGNORED_GENERATION_PARAMETERS,
     "gpt-5.5": _CODEX_AUTH_IGNORED_GENERATION_PARAMETERS,
     "gpt-5.6-sol": _CODEX_AUTH_IGNORED_GENERATION_PARAMETERS,
     "gpt-5.6-terra": _CODEX_AUTH_IGNORED_GENERATION_PARAMETERS,
@@ -45,7 +50,6 @@ GEMINI_WEB_SEARCH_MODELS = frozenset(
     {
         "gemini-3-flash-preview",
         "gemini-3.1-pro-preview",
-        "gemini-3.5-flash",
         "gemini-3.6-flash",
     }
 )

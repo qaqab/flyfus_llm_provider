@@ -329,7 +329,7 @@ def test_native_gemini_omits_search_when_disabled() -> None:
     assert "tools" not in body
 
 
-def test_native_gemini_preserves_server_side_tools_with_function_calls() -> None:
+def test_native_gemini_omits_search_when_function_tools_are_present() -> None:
     body = _adapter().build_body(
         model="gemini-3.5-flash",
         prompt_messages=[UserPromptMessage(content="Search the web")],
@@ -346,7 +346,18 @@ def test_native_gemini_preserves_server_side_tools_with_function_calls() -> None
         stop=None,
     )
 
-    assert body["toolConfig"] == {"includeServerSideToolInvocations": True}
+    assert body["tools"] == [
+        {
+            "functionDeclarations": [
+                {
+                    "name": "lookup",
+                    "description": "Looks up a value",
+                    "parameters": {"type": "object", "properties": {}},
+                }
+            ]
+        }
+    ]
+    assert "toolConfig" not in body
 
 
 def test_native_gemini_normalizes_agent_tool_schemas() -> None:

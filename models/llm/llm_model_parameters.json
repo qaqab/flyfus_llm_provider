@@ -126,12 +126,6 @@
   {
     "model": "gemini-3.5-flash",
     "parameters": {
-      "max_tokens": {
-        "type": "integer",
-        "min": 1,
-        "max": 65535,
-        "default": 65535
-      },
       "temperature": {
         "type": "number",
         "min": 0,
@@ -146,41 +140,38 @@
       "reasoning_effort": {
         "type": "enum",
         "values": [
+          "minimal",
           "low",
           "medium",
-          "high",
-          "xhigh"
+          "high"
         ],
-        "default": "medium"
-      },
-      "enable_web_search": {
-        "type": "boolean",
-        "values": [
-          true,
-          false
-        ],
-        "default": false
+        "default": "high"
       }
     }
   },
   {
     "model": "gemini-3.6-flash",
     "parameters": {
-      "max_tokens": {
-        "type": "integer",
-        "min": 1,
-        "max": 65536,
-        "default": 65536
+      "temperature": {
+        "type": "number",
+        "min": 0,
+        "max": 2,
+        "default": 1
+      },
+      "top_p": {
+        "type": "number",
+        "min": 0,
+        "max": 1
       },
       "reasoning_effort": {
         "type": "enum",
         "values": [
+          "minimal",
           "low",
           "medium",
-          "high",
-          "xhigh"
+          "high"
         ],
-        "default": "medium"
+        "default": "low"
       },
       "enable_web_search": {
         "type": "boolean",

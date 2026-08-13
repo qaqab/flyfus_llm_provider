@@ -97,6 +97,50 @@ def test_gpt_55_exposes_only_effective_parameters() -> None:
     assert "extra" not in model
 
 
+def test_gemini_flash_models_expose_verified_parameters() -> None:
+    plugin_root = Path(__file__).parents[1]
+    expectations = {
+        "gemini-3.5-flash": {
+            "context_size": 1000000,
+            "parameters": {
+                "temperature",
+                "top_p",
+                "response_format",
+                "json_schema",
+                "thinking_level",
+            },
+            "default_level": "High",
+            "web_search": False,
+        },
+        "gemini-3.6-flash": {
+            "context_size": 750000,
+            "parameters": {
+                "temperature",
+                "top_p",
+                "response_format",
+                "json_schema",
+                "thinking_level",
+                "enable_web_search",
+            },
+            "default_level": "Low",
+            "web_search": True,
+        },
+    }
+
+    for model_name, expected in expectations.items():
+        model_file = plugin_root / "models" / "llm" / f"{model_name}.yaml"
+        model = yaml.safe_load(model_file.read_text(encoding="utf-8"))
+        schema = AIModelEntity.model_validate(model)
+        rules = {rule["name"]: rule for rule in model["parameter_rules"]}
+
+        assert schema.model == model_name
+        assert model["model_properties"]["context_size"] == expected["context_size"]
+        assert set(rules) == expected["parameters"]
+        assert rules["thinking_level"]["options"] == ["Minimal", "Low", "Medium", "High"]
+        assert rules["thinking_level"]["default"] == expected["default_level"]
+        assert ("enable_web_search" in rules) is expected["web_search"]
+
+
 def test_minimax_m3_exposes_only_verified_parameters() -> None:
     plugin_root = Path(__file__).parents[1]
     model_file = plugin_root / "models" / "llm" / "MiniMax-M3.yaml"

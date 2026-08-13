@@ -171,12 +171,12 @@ class GeminiNativeDocumentAdapter:
 
         gemini_tools = self._convert_tools(tools or [])
         web_search_tool = build_web_search_tool(model, normalized_parameters)
+        if tools and model.lower() in {"gemini-3.5-flash", "gemini-3.6-flash"}:
+            web_search_tool = None
         if web_search_tool == {"google_search": {}}:
             web_search_tool = {"googleSearch": {}}
         if web_search_tool:
             gemini_tools.append(web_search_tool)
-            if tools:
-                body["toolConfig"] = {"includeServerSideToolInvocations": True}
         if gemini_tools:
             body["tools"] = gemini_tools
 

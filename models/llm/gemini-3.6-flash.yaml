@@ -12,7 +12,7 @@ features:
 - stream-tool-call
 model_properties:
   mode: chat
-  context_size: 1048576
+  context_size: 750000
 parameter_rules:
 - name: temperature
   use_template: temperature
@@ -21,11 +21,6 @@ parameter_rules:
   max: 2
 - name: top_p
   use_template: top_p
-- name: max_tokens
-  use_template: max_tokens
-  default: 65536
-  min: 1
-  max: 65536
 - name: response_format
   use_template: response_format
   options:
@@ -41,13 +36,14 @@ parameter_rules:
   type: string
   default: Low
   options:
+  - Minimal
   - Low
   - Medium
   - High
   required: false
   help:
-    zh_Hans: 控制推理深度。Minimal 在当前上游质量不稳定，未提供。
-    en_US: Controls reasoning depth. Minimal is omitted because it is unreliable on this upstream.
+    zh_Hans: 控制模型推理深度。
+    en_US: Controls the model reasoning depth.
 - name: enable_web_search
   type: boolean
   required: false
@@ -56,8 +52,8 @@ parameter_rules:
     en_US: Web search
     zh_Hans: 联网搜索
   help:
-    zh_Hans: 使用 Gemini 原生 Google Search，并返回 grounding 引用。
-    en_US: Uses Gemini native Google Search and returns grounding citations.
+    zh_Hans: 请求 Gemini 原生 Google Search；不能与函数工具同时启用，结果仍需核验。
+    en_US: Requests native Google Search; it cannot be combined with function tools and results still require verification.
 pricing:
   input: '0'
   output: '0'
