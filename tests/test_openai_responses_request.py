@@ -8,6 +8,7 @@ from models.llm.native.openai_responses import OpenAIResponsesAdapter
 from dify_plugin.entities.model.llm import LLMUsage
 from dify_plugin.entities.model.message import (
     DocumentPromptMessageContent,
+    ImagePromptMessageContent,
     SystemPromptMessage,
     UserPromptMessage,
 )
@@ -117,6 +118,38 @@ def test_muse_uses_responses_with_official_capabilities() -> None:
     assert body["reasoning"] == {"effort": "xhigh"}
     assert body["tools"] == [{"type": "web_search"}]
     assert body["text"]["format"]["type"] == "json_schema"
+
+
+def test_grok_46_accepts_public_image_url() -> None:
+    image_url = "https://example.com/image.jpg"
+    body = _adapter()._build_body(
+        model="grok-4.6",
+        credentials={},
+        prompt_messages=[
+            UserPromptMessage(
+                content=[
+                    ImagePromptMessageContent(
+                        format="url",
+                        url=image_url,
+                        mime_type="image/jpeg",
+                    )
+                ]
+            )
+        ],
+        model_parameters={},
+        tools=None,
+        stop=None,
+        stream=False,
+        user=None,
+    )
+
+    assert body["input"] == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_image", "image_url": image_url}],
+        }
+    ]
 
 
 def test_muse_rejects_non_pdf_document_input() -> None:

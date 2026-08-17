@@ -213,7 +213,7 @@ def test_grok_46_exposes_only_verified_capabilities() -> None:
     rules = {rule["name"]: rule for rule in model["parameter_rules"]}
 
     assert schema.model == "grok-4.6"
-    assert model["features"] == ["agent-thought", "tool-call"]
+    assert model["features"] == ["agent-thought", "vision", "tool-call"]
     assert model["model_properties"]["context_size"] == 450000
     assert set(rules) == {"reasoning_effort"}
     assert rules["reasoning_effort"]["options"] == ["low", "medium", "high", "xhigh"]

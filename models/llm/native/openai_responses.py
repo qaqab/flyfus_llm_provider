@@ -379,16 +379,16 @@ class OpenAIResponsesAdapter:
             if part.type == PromptMessageContentType.TEXT:
                 text_part: TextPromptMessageContent = part
                 content_parts.append({"type": "input_text", "text": text_part.data})
-            elif part.type == PromptMessageContentType.IMAGE and self._supports_attachments(model):
+            elif part.type == PromptMessageContentType.IMAGE and self._supports_image(model, part):
                 image_part: ImagePromptMessageContent = part
                 image_url = image_part.data
                 if mirrored_image_urls:
                     image_url = mirrored_image_urls.get(image_url, image_url)
                 item = {"type": "input_image", "image_url": image_url}
-                if image_part.detail:
+                if image_part.detail and model.lower() != "grok-4.6":
                     item["detail"] = image_part.detail.value
                 content_parts.append(item)
-            elif part.type == PromptMessageContentType.DOCUMENT and self._supports_attachments(model):
+            elif part.type == PromptMessageContentType.DOCUMENT and self._supports_documents(model):
                 document_part: DocumentPromptMessageContent = part
                 self._validate_document_input(model, document_part)
                 document_url = getattr(document_part, "url", "") or ""
@@ -648,7 +648,16 @@ class OpenAIResponsesAdapter:
         raise InvokeError("Muse Spark 推理文档仅支持 PDF；TXT 和 JSON 文件不会作为模型附件读取。")
 
     @staticmethod
-    def _supports_attachments(model: str) -> bool:
+    def _supports_image(model: str, image: ImagePromptMessageContent) -> bool:
+        if model.lower() == "grok-4.6":
+            image_url = urlparse(str(image.data or ""))
+            if image_url.scheme in {"http", "https"} and image_url.hostname:
+                return True
+            raise InvokeError("Grok 4.6 图片仅支持公开的 HTTP/HTTPS URL。")
+        return not model.lower().startswith("grok-")
+
+    @staticmethod
+    def _supports_documents(model: str) -> bool:
         return not model.lower().startswith("grok-")
 
     def _upload_file(self, credentials: dict, document_content: DocumentPromptMessageContent) -> Optional[str]:
