@@ -52,7 +52,7 @@ def test_gpt_sol_exposes_only_effective_parameters() -> None:
     rules = {rule["name"]: rule for rule in model["parameter_rules"]}
 
     assert schema.model == "gpt-5.6-sol"
-    assert model["model_properties"]["context_size"] == 360000
+    assert model["model_properties"]["context_size"] == 921000
     assert set(rules) == {
         "response_format",
         "json_schema",

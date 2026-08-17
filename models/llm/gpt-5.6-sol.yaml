@@ -12,7 +12,7 @@ features:
 - stream-tool-call
 model_properties:
   mode: chat
-  context_size: 360000
+  context_size: 921000
 parameter_rules:
 - name: response_format
   use_template: response_format
