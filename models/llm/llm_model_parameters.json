@@ -184,6 +184,28 @@
     }
   },
   {
+    "model": "gemini-3.7-flash",
+    "parameters": {
+      "reasoning_effort": {
+        "type": "enum",
+        "values": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "default": "medium"
+      },
+      "enable_web_search": {
+        "type": "boolean",
+        "values": [
+          true,
+          false
+        ],
+        "default": false
+      }
+    }
+  },
+  {
     "model": "glm-5.1",
     "parameters": {
       "max_tokens": {
@@ -280,6 +302,20 @@
           false
         ],
         "default": true
+      }
+    }
+  },
+  {
+    "model": "grok-4.6",
+    "parameters": {
+      "reasoning_effort": {
+        "type": "enum",
+        "values": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ]
       }
     }
   },

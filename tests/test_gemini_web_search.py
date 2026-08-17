@@ -203,6 +203,33 @@ def test_native_gemini_uses_rest_google_search_tool() -> None:
     assert body["tools"] == [{"googleSearch": {}}]
 
 
+def test_native_gemini_37_search_and_parameters_follow_verified_behavior() -> None:
+    model = object.__new__(FlyfusLargeLanguageModel)
+    adapter = GeminiNativeDocumentAdapter(
+        endpoint_url=lambda _credentials, _path: "https://example.test/",
+        normalize_model_parameters=model._normalize_model_parameters,
+        calc_response_usage=lambda *_args: LLMUsage.empty_usage(),
+    )
+    body = adapter.build_body(
+        model="gemini-3.7-flash",
+        prompt_messages=[UserPromptMessage(content="Search the web")],
+        model_parameters={
+            "thinking_level": "medium",
+            "enable_web_search": True,
+            "max_tokens": 512,
+            "temperature": 2,
+            "top_p": 0.1,
+            "response_format": "json_schema",
+            "json_schema": {"type": "object"},
+        },
+        tools=None,
+        stop=None,
+    )
+
+    assert body["generationConfig"] == {"thinkingConfig": {"thinkingLevel": "medium"}}
+    assert body["tools"] == [{"googleSearch": {}}]
+
+
 def test_native_gemini_empty_event_diagnostic_keeps_finish_and_safety_details() -> None:
     event = {
         "promptFeedback": {"blockReason": "SAFETY"},
@@ -331,7 +358,7 @@ def test_native_gemini_omits_search_when_disabled() -> None:
 
 def test_native_gemini_omits_search_when_function_tools_are_present() -> None:
     body = _adapter().build_body(
-        model="gemini-3.5-flash",
+        model="gemini-3.7-flash",
         prompt_messages=[UserPromptMessage(content="Search the web")],
         model_parameters={"enable_web_search": True},
         tools=[

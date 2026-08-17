@@ -1,0 +1,28 @@
+model: grok-4.6
+label:
+  zh_Hans: grok-4.6
+  en_US: grok-4.6
+model_type: llm
+features:
+- agent-thought
+- tool-call
+model_properties:
+  mode: chat
+  context_size: 450000
+parameter_rules:
+- name: reasoning_effort
+  label:
+    en_US: Reasoning effort
+    zh_Hans: 推理强度
+  type: string
+  required: false
+  options:
+  - low
+  - medium
+  - high
+  - xhigh
+pricing:
+  input: '0'
+  output: '0'
+  unit: '0.000001'
+  currency: USD

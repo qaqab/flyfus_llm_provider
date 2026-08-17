@@ -141,6 +141,27 @@ def test_gemini_flash_models_expose_verified_parameters() -> None:
         assert ("enable_web_search" in rules) is expected["web_search"]
 
 
+def test_gemini_37_flash_exposes_only_verified_capabilities() -> None:
+    plugin_root = Path(__file__).parents[1]
+    model_file = plugin_root / "models" / "llm" / "gemini-3.7-flash.yaml"
+    model = yaml.safe_load(model_file.read_text(encoding="utf-8"))
+    schema = AIModelEntity.model_validate(model)
+    rules = {rule["name"]: rule for rule in model["parameter_rules"]}
+
+    assert schema.model == "gemini-3.7-flash"
+    assert model["features"] == ["agent-thought", "vision", "document", "tool-call"]
+    assert model["model_properties"]["context_size"] == 1047000
+    assert set(rules) == {"thinking_level", "enable_web_search"}
+    assert rules["thinking_level"]["options"] == ["low", "medium", "high"]
+    assert rules["thinking_level"]["default"] == "medium"
+    assert rules["enable_web_search"]["default"] is False
+
+    position = yaml.safe_load(
+        (plugin_root / "models" / "llm" / "_position.yaml").read_text(encoding="utf-8")
+    )
+    assert position.count("gemini-3.7-flash") == 1
+
+
 def test_ling_flash_exposes_only_verified_capabilities() -> None:
     plugin_root = Path(__file__).parents[1]
     model_file = plugin_root / "models" / "llm" / "ling-3.0-flash.yaml"
@@ -182,6 +203,25 @@ def test_ling_flash_exposes_only_verified_capabilities() -> None:
         (plugin_root / "models" / "llm" / "_position.yaml").read_text(encoding="utf-8")
     )
     assert position.count("ling-3.0-flash") == 1
+
+
+def test_grok_46_exposes_only_verified_capabilities() -> None:
+    plugin_root = Path(__file__).parents[1]
+    model_file = plugin_root / "models" / "llm" / "grok-4.6.yaml"
+    model = yaml.safe_load(model_file.read_text(encoding="utf-8"))
+    schema = AIModelEntity.model_validate(model)
+    rules = {rule["name"]: rule for rule in model["parameter_rules"]}
+
+    assert schema.model == "grok-4.6"
+    assert model["features"] == ["agent-thought", "tool-call"]
+    assert model["model_properties"]["context_size"] == 450000
+    assert set(rules) == {"reasoning_effort"}
+    assert rules["reasoning_effort"]["options"] == ["low", "medium", "high", "xhigh"]
+
+    position = yaml.safe_load(
+        (plugin_root / "models" / "llm" / "_position.yaml").read_text(encoding="utf-8")
+    )
+    assert position.count("grok-4.6") == 1
 
 
 def test_minimax_m3_exposes_only_verified_parameters() -> None:

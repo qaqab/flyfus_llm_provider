@@ -171,7 +171,11 @@ class GeminiNativeDocumentAdapter:
 
         gemini_tools = self._convert_tools(tools or [])
         web_search_tool = build_web_search_tool(model, normalized_parameters)
-        if tools and model.lower() in {"gemini-3.5-flash", "gemini-3.6-flash"}:
+        if tools and model.lower() in {
+            "gemini-3.5-flash",
+            "gemini-3.6-flash",
+            "gemini-3.7-flash",
+        }:
             web_search_tool = None
         if web_search_tool == {"google_search": {}}:
             web_search_tool = {"googleSearch": {}}
