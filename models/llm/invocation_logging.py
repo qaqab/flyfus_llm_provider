@@ -21,7 +21,7 @@ _MAX_PREVIEW_LENGTH = 1200
 
 class InvocationLog:
     def __init__(self, *, model: str, credentials: dict, stream: bool, user: Optional[str]) -> None:
-        self.invocation_id = str(uuid.uuid4())
+        self.log_id = str(uuid.uuid4())
         self.started_at = time.time()
         self.model = model
         self.stream = stream
@@ -50,7 +50,7 @@ class InvocationLog:
                 "time": _iso_now(),
                 "elapsed_ms": int((time.time() - self.started_at) * 1000),
                 "name": name,
-                "invocation_id": self.invocation_id,
+                "log_id": self.log_id,
                 **_sanitize(fields, max_string_length=_MAX_EVENT_STRING_LENGTH),
             }
         )
@@ -98,6 +98,12 @@ class InvocationLog:
         output_text = fields.get("output_text")
         if isinstance(output_text, str) and output_text:
             self.response["output_text_md5"] = hashlib.md5(output_text.encode("utf-8")).hexdigest()
+        if "http" in fields:
+            fields["response_id"] = _nested_get(
+                fields.get("http") or {}, "headers", "x-litellm-call-id"
+            )
+        elif fields.get("response_id") is not None:
+            fields.pop("response_id")
         self.response.update(_sanitize(fields))
 
     def success(self, **fields: Any) -> None:
@@ -116,30 +122,25 @@ class InvocationLog:
             return
         self.flushed = True
 
-        response_id = _first_present(self.response.get("response_id"), self.response.get("id"))
-        upstream_request_id = _first_present(
-            _nested_get(self.response, "http", "headers", "x-request-id"),
-            self.response.get("provider_request_id"),
-        )
-        upstream_client_request_id = _nested_get(self.response, "http", "headers", "x-client-request-id")
-        upstream_cf_ray = _nested_get(self.response, "http", "headers", "cf-ray")
+        response_id = self.response.get("response_id")
+        x_request_ids = [
+            str(event["x_request_id"])
+            for event in self.events
+            if event.get("name") == "model_request_started" and event.get("x_request_id")
+        ]
+        cf_ray = _nested_get(self.response, "http", "headers", "cf-ray")
         upstream_request = self.request.get("upstream_request") or {}
         output_text = self.response.get("output_text")
         output_text_md5 = self.response.get("output_text_md5") or ""
         event = {
             "time": _iso_now(),
             "source": "flyfus_llm_provider",
-            "schema_version": 7,
+            "schema_version": 8,
             "event_type": "llm_invocation",
-            "log_id": self.invocation_id,
-            "request_id": self.invocation_id,
-            "x_request_id": self.invocation_id,
-            "invocation_id": self.invocation_id,
-            "client_request_id": self.invocation_id,
+            "log_id": self.log_id,
+            "x_request_ids": x_request_ids,
             "response_id": response_id,
-            "upstream_request_id": upstream_request_id,
-            "upstream_client_request_id": upstream_client_request_id,
-            "upstream_cf_ray": upstream_cf_ray,
+            "cf_ray": cf_ray,
             "model": self.model,
             "configured_model": self.request.get("configured_model") or self.model,
             "routed_model": self.request.get("routed_model") or self.model,
@@ -154,17 +155,6 @@ class InvocationLog:
             "dify_runtime": self.request.get("dify_runtime"),
             "duration_ms": int((time.time() - self.started_at) * 1000),
             "status": (self.result or {}).get("status", "unknown"),
-            "ids": {
-                "log_id": self.invocation_id,
-                "request_id": self.invocation_id,
-                "x_request_id": self.invocation_id,
-                "invocation_id": self.invocation_id,
-                "client_request_id": self.invocation_id,
-                "response_id": response_id,
-                "upstream_request_id": upstream_request_id,
-                "upstream_client_request_id": upstream_client_request_id,
-                "upstream_cf_ray": upstream_cf_ray,
-            },
             "input": {
                 "kind": _input_kind(self.request.get("prompt_metrics_final") or self.request.get("prompt_metrics_initial")),
                 "model": self.model,
@@ -292,16 +282,13 @@ def failure_output_text(invocation_log: InvocationLog, error: BaseException) -> 
         "user_message": getattr(error, "flyfus_user_message", "模型服务暂时不可用，请稍后重试。"),
         "retryable": bool(getattr(error, "flyfus_retryable", False)),
         "partial_output": partial_output,
-        "log_id": invocation_log.invocation_id,
-        "invocation_id": invocation_log.invocation_id,
-        "request_id": invocation_log.invocation_id,
-        "client_request_id": invocation_log.invocation_id,
+        "log_id": invocation_log.log_id,
         "response_id": response.get("response_id"),
-        "upstream_request_id": (
-            upstream_headers.get("x-request-id")
-            or upstream_headers.get("openai-request-id")
-            or response.get("provider_request_id")
-        ),
+        "x_request_ids": [
+            str(event["x_request_id"])
+            for event in invocation_log.events
+            if event.get("name") == "model_request_started" and event.get("x_request_id")
+        ],
         "cf_ray": upstream_headers.get("cf-ray"),
         "error": error_details,
     }
@@ -333,9 +320,7 @@ def http_response_summary(response: Any) -> dict:
         {
             "http_status": getattr(response, "status_code", None),
             "headers": {
-                "x-request-id": _header_value(headers, "x-request-id"),
-                "x-client-request-id": _header_value(headers, "x-client-request-id"),
-                "openai-request-id": _header_value(headers, "openai-request-id"),
+                "x-litellm-call-id": _header_value(headers, "x-litellm-call-id"),
                 "cf-ray": _header_value(headers, "cf-ray"),
                 "content-type": _header_value(headers, "content-type"),
             },
@@ -346,7 +331,6 @@ def http_response_summary(response: Any) -> dict:
 def responses_payload_summary(payload: dict) -> dict:
     return _sanitize(
         {
-            "response_id": payload.get("id"),
             "object": payload.get("object"),
             "model": payload.get("model"),
             "status": payload.get("status"),

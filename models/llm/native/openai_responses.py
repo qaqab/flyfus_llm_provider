@@ -152,10 +152,19 @@ class OpenAIResponsesAdapter:
         invocation_log=None,
     ) -> requests.Response:
         for attempt in range(2):
+            request_headers = self._request_headers(credentials)
+            x_request_id = request_headers.get("x-request-id")
+            if invocation_log is not None:
+                invocation_log.response.pop("response_id", None)
+                invocation_log.event(
+                    "model_request_started",
+                    adapter="openai_responses",
+                    x_request_id=x_request_id,
+                )
             try:
                 response = requests.post(
                     self._endpoint_url(credentials, "responses"),
-                    headers=self._request_headers(credentials),
+                    headers=request_headers,
                     json=request_body,
                     stream=stream,
                     timeout=(10, 120) if stream else (10, 300),
@@ -183,18 +192,14 @@ class OpenAIResponsesAdapter:
                 )
                 raise InvokeError(f"OpenAI Responses 请求失败：{error}") from error
 
-            request_id = response.headers.get("x-request-id") or response.headers.get("openai-request-id") or ""
             if invocation_log is not None:
-                invocation_log.set_response(
-                    http=http_response_summary(response),
-                    provider_request_id=request_id or None,
-                )
+                invocation_log.set_response(http=http_response_summary(response))
             _debug(
                 "[flyfus responses] response_headers model=%s stream=%s status=%s request_id=%s content_type=%s",
                 model,
                 stream,
                 response.status_code,
-                request_id,
+                response.headers.get("x-request-id") or response.headers.get("openai-request-id") or "",
                 response.headers.get("content-type", ""),
             )
             if response.status_code < 400:
@@ -810,7 +815,6 @@ class OpenAIResponsesAdapter:
             invocation_log.set_response(
                 **payload_summary,
                 upstream_usage=usage_payload,
-                provider_request_id=invocation_log.response.get("provider_request_id") or payload.get("id"),
             )
         return LLMResult(
             model=payload.get("model", model),
@@ -855,7 +859,7 @@ class OpenAIResponsesAdapter:
                     )
                     invocation_log.response.pop("error", None)
                     invocation_log.response.pop("error_body", None)
-                    invocation_log.set_response(response_id=None, provider_request_id=None)
+                    invocation_log.response.pop("response_id", None)
                 with suppress(Exception):
                     response.close()
                 response = self._open_response(
@@ -900,9 +904,8 @@ class OpenAIResponsesAdapter:
                         "stream_retry",
                         attempt=attempt + 1,
                         reason=str(error),
-                        response_id=invocation_log.response.get("response_id"),
                     )
-                    invocation_log.set_response(response_id=None, provider_request_id=None)
+                    invocation_log.response.pop("response_id", None)
                     invocation_log.response.pop("error", None)
                     invocation_log.response.pop("error_body", None)
                 with suppress(Exception):
@@ -936,7 +939,6 @@ class OpenAIResponsesAdapter:
         terminal_event_type: Optional[str] = None
         incomplete_details: dict = {}
         yielded_chunks = 0
-        response_id = ""
 
         _debug("[flyfus responses] stream_start model=%s prompt_summary=%s", model, self._prompt_summary(prompt_messages))
 
@@ -970,12 +972,7 @@ class OpenAIResponsesAdapter:
                 event_counts[event_type] = event_counts.get(event_type, 0) + 1
                 self._log_stream_event(model, total_events, event_type, event)
 
-                if event_type in {"response.created", "response.in_progress"}:
-                    response_payload = event.get("response") or {}
-                    response_id = response_payload.get("id") or response_id
-                    if invocation_log is not None and response_id:
-                        invocation_log.set_response(response_id=response_id)
-                elif event_type in {"response.output_text.delta", "response.refusal.delta"}:
+                if event_type in {"response.output_text.delta", "response.refusal.delta"}:
                     delta_text = event.get("delta") or event.get("text") or ""
                     if not delta_text:
                         continue
@@ -1025,7 +1022,6 @@ class OpenAIResponsesAdapter:
                     terminal_event_type = event_type
                     saw_completed = event_type == "response.completed"
                     response_payload = event.get("response") or {}
-                    response_id = response_payload.get("id") or response_id
                     final_model = response_payload.get("model") or final_model
                     usage_payload = response_payload.get("usage") or usage_payload
                     if invocation_log is not None:
@@ -1066,7 +1062,6 @@ class OpenAIResponsesAdapter:
                     error = response_payload.get("error") or event.get("error") or {}
                     if invocation_log is not None:
                         invocation_log.set_response(
-                            response_id=response_payload.get("id") or response_id,
                             error=error,
                             stream_event_counts=event_counts,
                             stream_event_count=total_events,
@@ -1122,12 +1117,10 @@ class OpenAIResponsesAdapter:
         tool_calls = self._pending_tool_calls_to_messages(pending_tool_calls)
         if invocation_log is not None:
             invocation_log.set_response(
-                response_id=response_id,
                 model=final_model,
                 output_text=full_text,
                 usage=usage_payload,
                 upstream_usage=usage_payload,
-                provider_request_id=invocation_log.response.get("provider_request_id") or response_id,
                 finish_reason=finish_reason,
                 saw_completed=saw_completed,
                 stream_event_counts=event_counts,
@@ -1203,7 +1196,7 @@ class OpenAIResponsesAdapter:
             "[flyfus responses] request_body %s",
             json.dumps(
                 {
-                    "invocation_id": getattr(invocation_log, "invocation_id", None),
+                    "log_id": getattr(invocation_log, "log_id", None),
                     "body": request_body,
                 },
                 ensure_ascii=False,

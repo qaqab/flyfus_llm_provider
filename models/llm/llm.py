@@ -70,6 +70,10 @@ _ACTIVE_INVOCATION_LOG: ContextVar[Optional[InvocationLog]] = ContextVar(
 _GEMINI_MAX_RETRIES = 2
 
 
+def _usage_request_id(invocation_log: InvocationLog) -> str:
+    return str(invocation_log.response.get("response_id") or invocation_log.log_id)
+
+
 class _GeminiPartialOutputError(FlyfusInvokeError):
     flyfus_error_type = "gemini_partial_output_error"
     flyfus_user_message = "模型响应在输出过程中发生异常，本次回答不完整，请重新发送。"
@@ -183,11 +187,9 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
         headers = {"Content-Type": "application/json"}
         if credentials.get("api_key"):
             headers["Authorization"] = f"Bearer {credentials['api_key']}"
-        invocation_id = credentials.get("_flyfus_invocation_id")
-        if invocation_id:
+        log_id = credentials.get("_flyfus_log_id")
+        if log_id:
             headers["x-request-id"] = str(uuid.uuid4())
-            headers["X-Client-Request-Id"] = invocation_id
-            headers["X-Flyfus-Invocation-Id"] = invocation_id
         return headers
 
     def _endpoint_url(self, credentials: dict, path: str) -> str:
@@ -625,7 +627,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
         if normalized["total_tokens"] is not None:
             usage.total_tokens = normalized["total_tokens"]
         invocation_log = _ACTIVE_INVOCATION_LOG.get()
-        log_id = invocation_log.invocation_id if invocation_log else credentials.get("_flyfus_invocation_id")
+        log_id = invocation_log.log_id if invocation_log else credentials.get("_flyfus_log_id")
         usage.currency = format_usage_currency(raw_usage, log_id=str(log_id) if log_id else None)
         return usage
 
@@ -669,34 +671,30 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
         )
         def usage_reporter(usage):
             raw_usage = invocation_log.response.get("upstream_usage") or usage
-            provider_request_id = (
-                invocation_log.response.get("provider_request_id")
-                or invocation_log.response.get("response_id")
-                or invocation_log.invocation_id
-            )
+            usage_request_id = _usage_request_id(invocation_log)
             try:
                 reported = report_token_usage(
-                    provider_request_id,
+                    usage_request_id,
                     model,
                     raw_usage,
                     user,
                     flyfus_settings.log_context(),
                     flyfus_settings.ai_mode_name,
                     credentials,
-                    log_id=invocation_log.invocation_id,
+                    log_id=invocation_log.log_id,
                 )
             except Exception as error:
                 invocation_log.event(
                     "token_usage_report",
                     status="error",
-                    request_id=provider_request_id,
+                    request_id=usage_request_id,
                     error_type=type(error).__name__,
                 )
                 return False
             invocation_log.event(
                 "token_usage_report",
                 status="success" if reported else "skipped_or_failed",
-                request_id=provider_request_id,
+                request_id=usage_request_id,
                 has_usage=raw_usage is not None,
             )
             return reported
@@ -731,7 +729,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
         if model_route_applied:
             route_credentials.pop("endpoint_model_name", None)
         normalized_credentials = self._normalize_credentials(model, route_credentials)
-        normalized_credentials["_flyfus_invocation_id"] = invocation_log.invocation_id
+        normalized_credentials["_flyfus_log_id"] = invocation_log.log_id
         active_log_token = _ACTIVE_INVOCATION_LOG.set(invocation_log)
         family = model_family(model)
         invocation_log.set_request(model_family=family)
@@ -771,7 +769,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                     if not trim_result.trimmed:
                         continue
                     invocation_log.response.pop("error_body", None)
-                    invocation_log.set_response(response_id=None, provider_request_id=None)
+                    invocation_log.response.pop("response_id", None)
                     invocation_log.event(
                         "context_error_retry",
                         stage=trim_result.stage,
@@ -806,11 +804,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                     adapter="gemini_native",
                     upstream_request={
                         "endpoint": self._endpoint_url(normalized_credentials, f"models/{model}:generateContent"),
-                        "headers": {
-                            key: value
-                            for key, value in self._request_headers(normalized_credentials).items()
-                            if key.lower() != "authorization"
-                        },
+                        "headers": {"Content-Type": "application/json"},
                         "body_summary": {
                             "content_count": len(upstream_request_body.get("contents") or []),
                             "tool_count": len(upstream_request_body.get("tools") or []),
@@ -859,7 +853,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                                     raise _GeminiRetryExhaustedError(reason, retries, error) from error
                                 retries += 1
                                 invocation_log.response.pop("error_body", None)
-                                invocation_log.set_response(response_id=None, provider_request_id=None)
+                                invocation_log.response.pop("response_id", None)
                                 invocation_log.event(
                                     "gemini_retry",
                                     reason=reason,
@@ -888,7 +882,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                             raise _GeminiRetryExhaustedError(reason, retries, error) from error
                         retries += 1
                         invocation_log.response.pop("error_body", None)
-                        invocation_log.set_response(response_id=None, provider_request_id=None)
+                        invocation_log.response.pop("response_id", None)
                         invocation_log.event(
                             "gemini_retry",
                             reason=reason,
@@ -925,13 +919,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                             "endpoint": self._endpoint_url(
                                 normalized_credentials, "responses"
                             ),
-                            "headers": {
-                                key: value
-                                for key, value in self._request_headers(
-                                    normalized_credentials
-                                ).items()
-                                if key.lower() != "authorization"
-                            },
+                            "headers": {"Content-Type": "application/json"},
                             "body_summary": {
                                 "model": upstream_request_body.get("model"),
                                 "stream": upstream_request_body.get("stream"),
@@ -1023,11 +1011,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                     stream=stream,
                     user=None,
                     convert_message=self._convert_prompt_message_to_dict,
-                    headers={
-                        key: value
-                        for key, value in self._request_headers(normalized_credentials).items()
-                        if key.lower() != "authorization"
-                    },
+                    headers={"Content-Type": "application/json"},
                 ),
             )
             def invoke_openai_compatible():
@@ -1045,17 +1029,51 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                     endpoint=self._endpoint_url(normalized_credentials, "chat/completions"),
                     body=replay_body,
                 )
-                with invocation_log.step("upstream_request", adapter="openai_compatible"):
-                    return super(FlyfusLargeLanguageModel, self)._invoke(
-                        model=model,
-                        credentials=normalized_credentials,
-                        prompt_messages=prompt_messages,
-                        model_parameters=normalized_model_parameters,
-                        tools=tools,
-                        stop=stop,
-                        stream=stream,
-                        user=None,
-                    )
+                request_headers = {
+                    **self._request_headers(normalized_credentials),
+                    **dict(normalized_credentials.get("extra_headers") or {}),
+                }
+                # The plugin-generated ID must be authoritative for every attempt.
+                x_request_id = str(uuid.uuid4())
+                request_headers["x-request-id"] = x_request_id
+                invocation_log.response.pop("response_id", None)
+                invocation_log.event(
+                    "model_request_started",
+                    adapter="openai_compatible",
+                    x_request_id=x_request_id,
+                )
+                stream_log_token = _ACTIVE_INVOCATION_LOG.set(invocation_log)
+                try:
+                    with invocation_log.step("upstream_request", adapter="openai_compatible"):
+                        response = requests.post(
+                            self._endpoint_url(normalized_credentials, "chat/completions"),
+                            headers=request_headers,
+                            json=replay_body,
+                            timeout=(10, 300),
+                            stream=stream,
+                        )
+                        if response.encoding is None or response.encoding == "ISO-8859-1":
+                            response.encoding = "utf-8"
+                        invocation_log.set_response(http=http_response_summary(response))
+                        if response.status_code != 200:
+                            raise InvokeError(
+                                f"API request failed with status code {response.status_code}: {response.text}"
+                            )
+                        if stream:
+                            return self._handle_generate_stream_response(
+                                model,
+                                normalized_credentials,
+                                response,
+                                prompt_messages,
+                            )
+                        return self._handle_generate_response(
+                            model,
+                            normalized_credentials,
+                            response,
+                            prompt_messages,
+                        )
+                finally:
+                    _ACTIVE_INVOCATION_LOG.reset(stream_log_token)
 
             if stream:
                 def retry_openai_compatible_stream():
@@ -1218,4 +1236,21 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
             model=response_json.get("model", model),
             message=assistant_message,
             usage=self._calc_response_usage(model, credentials, prompt_tokens, completion_tokens),
+        )
+
+    def _handle_generate_stream_response(
+        self,
+        model: str,
+        credentials: dict,
+        response: requests.Response,
+        prompt_messages: list[PromptMessage],
+    ) -> Generator:
+        active_log = _ACTIVE_INVOCATION_LOG.get()
+        if active_log is not None:
+            active_log.set_response(http=http_response_summary(response))
+        return super()._handle_generate_stream_response(
+            model,
+            credentials,
+            response,
+            prompt_messages,
         )

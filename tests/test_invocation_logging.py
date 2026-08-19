@@ -16,6 +16,24 @@ def _error_payload(message: str) -> dict:
     return json.loads(message[len(prefix) : -len(suffix)])
 
 
+def test_response_id_only_uses_litellm_call_id_header() -> None:
+    log = InvocationLog(model="test-model", credentials={}, stream=False, user=None)
+    log.set_response(
+        http={"headers": {"x-litellm-call-id": "litellm-call-1"}},
+        response_id="legacy-response-1",
+    )
+    log.set_response(response_id="legacy-response-2")
+
+    assert log.response["response_id"] == "litellm-call-1"
+
+
+def test_response_id_ignores_legacy_value_without_litellm_call_id_header() -> None:
+    log = InvocationLog(model="test-model", credentials={}, stream=False, user=None)
+    log.set_response(http={"headers": {}}, response_id="legacy-response-1")
+
+    assert log.response.get("response_id") is None
+
+
 def test_stream_failure_is_logged_and_raised_as_error_envelope(monkeypatch) -> None:
     captured = {}
     monkeypatch.setattr(
@@ -47,18 +65,15 @@ def test_stream_failure_is_logged_and_raised_as_error_envelope(monkeypatch) -> N
         "user_message": "模型服务暂时不可用，请稍后重试。",
         "retryable": False,
         "partial_output": False,
-        "log_id": log.invocation_id,
-        "invocation_id": log.invocation_id,
-        "request_id": log.invocation_id,
-        "client_request_id": log.invocation_id,
+        "log_id": log.log_id,
         "response_id": None,
-        "upstream_request_id": None,
+        "x_request_ids": [],
         "cf_ray": None,
     }
     assert "model: gemini-3.6-flash" in error_details
     assert "error_type: RuntimeError" in error_details
     assert "error: upstream read timed out" in error_details
-    assert payload["log_id"] == log.invocation_id
+    assert payload["log_id"] == log.log_id
     assert captured["event"]["status"] == "error"
     assert captured["event"]["timeline"][-1]["name"] == "stream_error"
 
@@ -70,6 +85,7 @@ def test_recognized_stream_failure_uses_specific_flyfus_error_type(monkeypatch) 
         response_id="resp_123",
         http={
             "headers": {
+                "x-litellm-call-id": "resp_123",
                 "x-request-id": "request-123",
                 "x-client-request-id": "client-request-123",
                 "cf-ray": "ray-123",
@@ -79,6 +95,7 @@ def test_recognized_stream_failure_uses_specific_flyfus_error_type(monkeypatch) 
         stream_event_counts={"response.created": 1, "unknown": 1},
         stream_last_event_type="unknown",
     )
+    log.event("model_request_started", x_request_id="request-123")
     log.event("stream_retry", attempt=1)
     log.event("gemini_retry", retry=1)
     log.event("request_retry", retry=1)
@@ -97,12 +114,9 @@ def test_recognized_stream_failure_uses_specific_flyfus_error_type(monkeypatch) 
         "user_message": "模型响应中断，请稍后重试。",
         "retryable": True,
         "partial_output": False,
-        "log_id": log.invocation_id,
-        "invocation_id": log.invocation_id,
-        "request_id": log.invocation_id,
-        "client_request_id": log.invocation_id,
+        "log_id": log.log_id,
         "response_id": "resp_123",
-        "upstream_request_id": "request-123",
+        "x_request_ids": ["request-123"],
         "cf_ray": "ray-123",
     }
     assert "stream_event_count: 44" in error_details
@@ -130,7 +144,7 @@ def test_partial_stream_failure_preserves_chunks_then_raises_error_envelope(monk
 
     payload = _error_payload(str(exc_info.value))
     assert payload["partial_output"] is True
-    assert payload["log_id"] == log.invocation_id
+    assert payload["log_id"] == log.log_id
 
 
 def test_invocation_event_exposes_model_route_fields(monkeypatch) -> None:
@@ -150,18 +164,18 @@ def test_invocation_event_exposes_model_route_fields(monkeypatch) -> None:
         workflow_id="workflow-1",
         conversation_id="conversation-1",
     )
+    log.event("model_request_started", x_request_id="request-1")
+    log.event("model_request_started", x_request_id="request-2")
     log.success()
 
     log.flush()
 
-    assert captured["event"]["schema_version"] == 7
-    assert captured["event"]["log_id"] == log.invocation_id
-    assert captured["event"]["request_id"] == log.invocation_id
-    assert captured["event"]["x_request_id"] == log.invocation_id
-    assert captured["event"]["invocation_id"] == log.invocation_id
-    assert captured["event"]["ids"]["log_id"] == log.invocation_id
-    assert captured["event"]["ids"]["request_id"] == log.invocation_id
-    assert captured["event"]["ids"]["x_request_id"] == log.invocation_id
+    assert captured["event"]["schema_version"] == 8
+    assert captured["event"]["log_id"] == log.log_id
+    assert captured["event"]["x_request_ids"] == ["request-1", "request-2"]
+    assert "request_id" not in captured["event"]
+    assert "invocation_id" not in captured["event"]
+    assert "ids" not in captured["event"]
     assert captured["event"]["model"] == "gpt-5.6-sol"
     assert captured["event"]["configured_model"] == "medium"
     assert captured["event"]["routed_model"] == "gpt-5.6-sol"
@@ -200,7 +214,9 @@ def test_sls_log_indexes_model_route_fields(monkeypatch) -> None:
     monkeypatch.setattr(sls_logging, "LogClient", FakeLogClient)
     monkeypatch.setattr(sls_logging, "PutLogsRequest", FakePutLogsRequest)
     event = {
-        "invocation_id": "invocation-1",
+        "log_id": "log-1",
+        "response_id": "response-1",
+        "x_request_ids": ["request-1", "request-2"],
         "model": "gpt-5.6-sol",
         "configured_model": "medium",
         "routed_model": "gpt-5.6-sol",
@@ -221,10 +237,11 @@ def test_sls_log_indexes_model_route_fields(monkeypatch) -> None:
 
     sls_logging.write_invocation_log(credentials, event)
 
-    assert captured["contents"]["log_id"] == "invocation-1"
-    assert captured["contents"]["request_id"] == "invocation-1"
-    assert captured["contents"]["x_request_id"] == "invocation-1"
-    assert captured["contents"]["invocation_id"] == "invocation-1"
+    assert captured["contents"]["log_id"] == "log-1"
+    assert captured["contents"]["response_id"] == "response-1"
+    assert captured["contents"]["x_request_ids"] == '["request-1", "request-2"]'
+    assert "request_id" not in captured["contents"]
+    assert "invocation_id" not in captured["contents"]
     assert captured["contents"]["model"] == "gpt-5.6-sol"
     assert captured["contents"]["configured_model"] == "medium"
     assert captured["contents"]["routed_model"] == "gpt-5.6-sol"
@@ -271,7 +288,7 @@ def test_sls_logstore_defaults_for_existing_credentials(monkeypatch) -> None:
             "sls_access_key_id": "key-id",
             "sls_access_key_secret": "key-secret",
         },
-        {"invocation_id": "invocation-1"},
+        {"log_id": "log-1"},
     )
 
     assert captured["logstore"] == "flyfus-dify-llm-log"

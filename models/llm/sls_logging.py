@@ -21,16 +21,15 @@ def write_invocation_log(credentials: dict[str, Any], event: dict[str, Any]) -> 
     if not endpoint or not project or not access_key_id or not access_key_secret:
         logger.warning(
             "Flyfus LLM log skipped: SLS credentials are incomplete",
-            extra={"invocation_id": event.get("invocation_id")},
+            extra={"log_id": event.get("log_id")},
         )
         return
 
     metrics = ((event.get("input") or {}).get("metrics") or {})
     contents = [
-        ("log_id", str(event.get("log_id") or event.get("invocation_id") or "")),
-        ("request_id", str(event.get("request_id") or event.get("invocation_id") or "")),
-        ("x_request_id", str(event.get("x_request_id") or event.get("invocation_id") or "")),
-        ("invocation_id", str(event.get("invocation_id") or "")),
+        ("log_id", str(event.get("log_id") or "")),
+        ("response_id", str(event.get("response_id") or "")),
+        ("x_request_ids", json.dumps(event.get("x_request_ids") or [], ensure_ascii=False)),
         ("user", str(event.get("user") or "")),
         ("user_id", str(event.get("user_id") or "")),
         ("app_id", str(event.get("app_id") or "")),
@@ -60,7 +59,7 @@ def write_invocation_log(credentials: dict[str, Any], event: dict[str, Any]) -> 
         logger.warning(
             "Flyfus LLM log delivery failed",
             extra={
-                "invocation_id": event.get("invocation_id"),
+                "log_id": event.get("log_id"),
                 "exception_type": type(error).__name__,
             },
         )

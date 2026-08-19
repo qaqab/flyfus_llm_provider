@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.72
+
+- Unify model-call tracking around one stable `log_id`, unique `x-request-id` values per HTTP attempt, and a `response_id` read only from `x-litellm-call-id`.
+- Report Geo token usage with `request_id=response_id`, falling back to `log_id` when LiteLLM omits the response header.
+- Remove duplicate invocation/request aliases from SLS and error envelopes; retain every model attempt in `x_request_ids`.
+
 ## 0.0.60
 
 - Raise terminal model failures as Dify `InvokeError` exceptions after configured retries are exhausted, with the complete `<FLYFUS_ERROR>` envelope in the error message.

@@ -78,6 +78,13 @@ class GeminiNativeDocumentAdapter:
             try:
                 request_headers = self._request_headers(credentials)
                 request_headers.pop("Authorization", None)
+                if invocation_log is not None:
+                    invocation_log.response.pop("response_id", None)
+                    invocation_log.event(
+                        "model_request_started",
+                        adapter="gemini_native",
+                        x_request_id=request_headers.get("x-request-id"),
+                    )
                 response = requests.post(
                     request_url,
                     headers=request_headers,
@@ -104,10 +111,7 @@ class GeminiNativeDocumentAdapter:
                 raise InvokeError(f"Gemini 原生请求失败：{error}") from error
 
             if invocation_log is not None:
-                invocation_log.set_response(
-                    http=http_response_summary(response),
-                    provider_request_id=self._provider_request_id(response.headers) or None,
-                )
+                invocation_log.set_response(http=http_response_summary(response))
             if response.status_code < 400:
                 if invocation_log is not None:
                     invocation_log.response.pop("error_body", None)
@@ -137,18 +141,6 @@ class GeminiNativeDocumentAdapter:
         if stream:
             return self._handle_stream(model, credentials, response, invocation_log)
         return self._handle_response(model, credentials, response, invocation_log)
-
-    @staticmethod
-    def _provider_request_id(headers: object) -> str:
-        get = getattr(headers, "get", None)
-        if not callable(get):
-            return ""
-        return (
-            get("x-request-id")
-            or get("x-goog-request-id")
-            or get("x-google-request-id")
-            or ""
-        )
 
     def build_body(
         self,
@@ -414,7 +406,6 @@ class GeminiNativeDocumentAdapter:
         diagnostics = self._provider_diagnostics(payload)
         if invocation_log is not None:
             invocation_log.set_response(
-                response_id=payload.get("responseId") or None,
                 upstream_usage=raw_usage,
                 finish_reason=self._extract_finish_reason(payload),
                 provider_diagnostics=diagnostics,
@@ -435,7 +426,6 @@ class GeminiNativeDocumentAdapter:
         in_thought = False
         pending_tool_calls: list[AssistantPromptMessage.ToolCall] = []
         has_visible_answer_text = False
-        response_id: Optional[str] = None
         event_count = 0
         invalid_stream_event_count = 0
         candidate_count = 0
@@ -491,7 +481,6 @@ class GeminiNativeDocumentAdapter:
                 continue
 
             event_count += 1
-            response_id = event.get("responseId") or response_id
             usage_payload = event.get("usageMetadata") or usage_payload
             finish_reason = self._extract_finish_reason(event) or finish_reason
             event_diagnostics = self._provider_diagnostics(event)
@@ -534,7 +523,6 @@ class GeminiNativeDocumentAdapter:
         }
         if invocation_log is not None:
             invocation_log.set_response(
-                response_id=response_id,
                 upstream_usage=raw_usage,
                 stream_event_count=event_count,
                 finish_reason=finish_reason,

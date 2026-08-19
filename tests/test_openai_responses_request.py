@@ -278,7 +278,7 @@ def test_responses_request_retries_server_error_once(monkeypatch) -> None:
 
     result = adapter._open_response(
         model="gpt-5.6-sol",
-        credentials={"_flyfus_invocation_id": "invocation-123"},
+        credentials={"_flyfus_log_id": "log-123"},
         request_body={"model": "gpt-5.6-sol"},
         stream=True,
         invocation_log=invocation_log,
@@ -286,9 +286,18 @@ def test_responses_request_retries_server_error_once(monkeypatch) -> None:
 
     assert result is second
     assert first.closed is True
-    assert invocation_log.events[0]["name"] == "request_retry"
-    assert invocation_log.events[0]["reason"] == "upstream_server_error"
+    assert [event["name"] for event in invocation_log.events] == [
+        "model_request_started",
+        "request_retry",
+        "model_request_started",
+    ]
+    assert invocation_log.events[1]["reason"] == "upstream_server_error"
     assert request_ids[0] != request_ids[1]
+    assert [
+        event["x_request_id"]
+        for event in invocation_log.events
+        if event["name"] == "model_request_started"
+    ] == request_ids
 
 
 def test_responses_request_does_not_retry_bad_request(monkeypatch) -> None:
@@ -423,7 +432,7 @@ def test_responses_stream_retries_once_when_no_chunk_was_yielded(monkeypatch) ->
     assert first.closed is True
     assert len(posted) == 1
     assert posted[0]["json"] is request_body
-    assert invocation_log.response["response_id"] == "response-second"
+    assert invocation_log.response.get("response_id") is None
     assert invocation_log.events == [
         {
             "name": "stream_retry",
@@ -432,8 +441,12 @@ def test_responses_stream_retries_once_when_no_chunk_was_yielded(monkeypatch) ->
                 "OpenAI Responses 流式响应提前结束：未收到 response.completed"
                 "（last_event=unknown, events={'response.created': 1, 'unknown': 1}）"
             ),
-            "response_id": "response-first",
-        }
+        },
+        {
+            "name": "model_request_started",
+            "adapter": "openai_responses",
+            "x_request_id": None,
+        },
     ]
 
 

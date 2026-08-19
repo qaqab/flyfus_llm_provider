@@ -38,7 +38,7 @@ class _InvocationLog:
         self.events.append({"name": name, **fields})
 
 
-def test_native_gemini_sends_invocation_id_as_request_id(monkeypatch) -> None:
+def test_native_gemini_sends_unique_request_id(monkeypatch) -> None:
     captured = {}
 
     class Response:
@@ -62,17 +62,12 @@ def test_native_gemini_sends_invocation_id_as_request_id(monkeypatch) -> None:
         return Response()
 
     monkeypatch.setattr("models.llm.native.gemini.requests.post", post)
-    invocation_id = "invocation-123"
-    adapter = _adapter(
-        request_headers=lambda credentials: {
-            "Content-Type": "application/json",
-            "x-request-id": credentials["_flyfus_invocation_id"],
-        }
-    )
+    model = object.__new__(FlyfusLargeLanguageModel)
+    adapter = _adapter(request_headers=model._request_headers)
 
     adapter.invoke(
         model="gemini-3.6-flash",
-        credentials={"api_key": "key", "_flyfus_invocation_id": invocation_id},
+        credentials={"api_key": "key", "_flyfus_log_id": "log-123"},
         prompt_messages=[UserPromptMessage(content="hello")],
         model_parameters={},
         tools=None,
@@ -81,7 +76,7 @@ def test_native_gemini_sends_invocation_id_as_request_id(monkeypatch) -> None:
         user=None,
     )
 
-    assert captured["headers"]["x-request-id"] == invocation_id
+    assert captured["headers"]["x-request-id"] != "log-123"
 
 
 def test_native_gemini_request_retries_server_error_once(monkeypatch) -> None:
@@ -126,7 +121,7 @@ def test_native_gemini_request_retries_server_error_once(monkeypatch) -> None:
 
     result = adapter.invoke(
         model="gemini-3.6-flash",
-        credentials={"api_key": "key", "_flyfus_invocation_id": "invocation-123"},
+        credentials={"api_key": "key", "_flyfus_log_id": "log-123"},
         prompt_messages=[UserPromptMessage(content="hello")],
         model_parameters={},
         tools=None,
@@ -138,12 +133,21 @@ def test_native_gemini_request_retries_server_error_once(monkeypatch) -> None:
 
     assert result.message.content == "complete"
     assert first.closed is True
-    assert invocation_log.events[0]["name"] == "request_retry"
-    assert invocation_log.events[0]["reason"] == "upstream_server_error"
+    assert [event["name"] for event in invocation_log.events] == [
+        "model_request_started",
+        "request_retry",
+        "model_request_started",
+    ]
+    assert invocation_log.events[1]["reason"] == "upstream_server_error"
     assert request_ids[0] != request_ids[1]
+    assert [
+        event["x_request_id"]
+        for event in invocation_log.events
+        if event["name"] == "model_request_started"
+    ] == request_ids
 
 
-def test_native_gemini_records_non_stream_response_id() -> None:
+def test_native_gemini_ignores_non_stream_body_response_id() -> None:
     class Response:
         def json(self):
             return {
@@ -165,10 +169,10 @@ def test_native_gemini_records_non_stream_response_id() -> None:
         invocation_log=invocation_log,
     )
 
-    assert invocation_log.response["response_id"] == "gemini-response-1"
+    assert invocation_log.response.get("response_id") is None
 
 
-def test_native_gemini_records_stream_response_id() -> None:
+def test_native_gemini_ignores_stream_body_response_id() -> None:
     class Response:
         def iter_lines(self, decode_unicode=False):
             assert decode_unicode is False
@@ -188,7 +192,7 @@ def test_native_gemini_records_stream_response_id() -> None:
         )
     )
 
-    assert invocation_log.response["response_id"] == "gemini-response-2"
+    assert invocation_log.response.get("response_id") is None
 
 
 def test_native_gemini_uses_rest_google_search_tool() -> None:
