@@ -547,7 +547,7 @@ class OpenAIResponsesAdapter:
         started_at = time.monotonic()
         try:
             response = requests.post(
-                f"{base_url}/v1/oss-assets/image-url/upload",
+                f"{base_url}/v1/oss-assets/flyfus/image-url/upload",
                 headers={
                     "Accept": "application/json",
                     "Authorization": f"Bearer {token}",
