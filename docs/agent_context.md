@@ -11,7 +11,7 @@ Chat App 里用户直接上传的图片和文档走 Dify 原生附件能力，�
 ```text
 <FLYFUS_CONTEXT>
 image1: "https://example.com/a.png"
-file1: "https://example.com/a.xlsx"
+file1: "https://example.com/a.md"
 </FLYFUS_CONTEXT>
 ```
 
@@ -22,13 +22,14 @@ file1: "https://example.com/a.xlsx"
 - `FLYFUS_SETTING` 不作为模型内容，只用于模型参数和日志字段解析。
 - `FLYFUS_CONTEXT` 和 `FLYFUS_FILE` 内部都按正则扫描公网 URL，不要求 JSON 或字段名。
 - 这两个附件标签内部可以是普通文本、JSON、列表或它们的组合。
-- 图片支持 PNG、JPG、JPEG；文件支持 PDF、MD、XLSX、CSV、TXT、HTML。
+- 图片支持 PNG、JPG、JPEG；文件附件支持 MD、TXT、HTML。
+- PDF、CSV、XLS、XLSX URL 保留在消息文本中，但不会作为文件附件注入模型。
 - 同一次模型调用中，相同 URL 只会作为一个附件注入。
 
 示例：
 
 ```text
-<FLYFUS_CONTEXT>{"data":["https://example.com/a.png","https://example.com/a.xlsx"]}</FLYFUS_CONTEXT>
+<FLYFUS_CONTEXT>{"data":["https://example.com/a.png","https://example.com/a.md"]}</FLYFUS_CONTEXT>
 ```
 
 `read_file` 工具接收逗号或换行分隔的 URL，并输出标签内的换行 URL 列表。

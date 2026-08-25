@@ -5,7 +5,7 @@
 - 模型 ID：`muse-spark-1.2-contributor`
 - 接口：Flyfus LiteLLM OpenAI-compatible API
 - 主要路径：`/v1/models`、`/v1/chat/completions`、`/v1/responses`
-- 测试时间：2026-08-10，Asia/Shanghai
+- 测试时间：2026-08-10、2026-08-21，Asia/Shanghai
 - 密钥：虚拟密钥，仅在请求头使用，未写入仓库
 - 官方上下文窗口：`1,048,576` tokens，输入与输出共享
 - 中转实测输入：最高 `150029` tokens，并准确读取尾部校验码
@@ -65,10 +65,12 @@
 | 小图标 data URI | base64 PNG | 200 | 识别图标外形、颜色和中心符号 | pass |
 | 已知图形 data URI | 5 圆房屋图 | 200 | 准确回答 5 圆、4 蓝 1 橙、房屋形连接线 | pass |
 | 图片 URL | 公网 JPEG | 400 | 上游下载源站返回 400，无法判断 URL 格式 | not-tested |
-| TXT file_data | 随机标记 TXT | 200 | 模型表示没有附件，没有返回标记 | fail |
+| Chat TXT file_data | 随机标记 TXT | 200 | 模型表示没有附件，没有返回标记 | fail（端点） |
 | PDF file_data | 含随机标记的真实 PDF | 200 | 准确返回 `MUSE_FILE_PROBE_8A41D2` | pass |
 | Chat input_file | PDF data URI | 500 | user message 格式无效 | fail |
 | Responses input_file | PDF data URI | 200 | 准确返回随机标记 | pass |
+| Responses input_file | TXT data URI | 200 | 准确返回 `MUSE_TXT_LIVE_PROBE_C27194` | pass |
+| Responses input_file | JSON data URI | 200 | 准确返回 `MUSE_JSON_LIVE_PROBE_74B823` | pass |
 
 ## 重要行为
 
@@ -105,7 +107,7 @@ features:
 
 - 官网声明 text、image、video、audio 和 PDF 输入；模型输出为 text；
 - PDF 通过 Chat `file.file_data` 和 Responses `input_file` 均读取成功，插件声明 `document`；
-- TXT 在推理请求中被忽略，与官网“TXT/JSON 主要用于 batch 等其他用途”的说明一致；
+- TXT 在 Chat `file.file_data` 路径中被忽略，但 TXT、JSON 已通过 Responses `input_file.file_data` 实测读取成功；
 - 当前插件 Responses 适配器尚未转换 Dify 的 video/audio 内容，因此暂不声明 `video`、`audio`。
 
 建议参数：

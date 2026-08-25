@@ -34,6 +34,7 @@ from models.llm.context_guard import (
     validate_message_protocol,
 )
 from models.llm.flyfus_settings import extract_flyfus_settings
+from models.llm.flyfus_memory import apply_flyfus_memory
 from models.llm.geo_prompt import render_geo_prompt_references
 from models.llm.invocation_logging import (
     http_response_summary,
@@ -644,6 +645,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
     ) -> Union[LLMResult, Generator]:
         configured_model = model
         route = apply_model_route(model, model_parameters, prompt_messages)
+        apply_flyfus_memory(prompt_messages)
         flyfus_settings = extract_flyfus_settings(prompt_messages)
         ai_mode = apply_ai_mode(
             route.model,

@@ -152,29 +152,49 @@ def test_grok_46_accepts_public_image_url() -> None:
     ]
 
 
-def test_muse_rejects_non_pdf_document_input() -> None:
-    with pytest.raises(InvokeError, match="仅支持 PDF"):
-        _adapter()._build_body(
-            model="muse-spark-1.2-contributor",
-            credentials={},
-            prompt_messages=[
-                UserPromptMessage(
-                    content=[
-                        DocumentPromptMessageContent(
-                            format="base64",
-                            base64_data="dGVzdA==",
-                            mime_type="text/plain",
-                            filename="notes.txt",
-                        )
-                    ]
-                )
-            ],
-            model_parameters={},
-            tools=None,
-            stop=None,
-            stream=False,
-            user=None,
-        )
+@pytest.mark.parametrize(
+    ("filename", "mime_type"),
+    [("notes.txt", "text/plain"), ("data.json", "application/json")],
+)
+def test_muse_accepts_non_pdf_document_file_data(
+    monkeypatch, filename: str, mime_type: str
+) -> None:
+    adapter = _adapter()
+    monkeypatch.setattr(
+        adapter,
+        "_upload_file",
+        lambda *_args: pytest.fail("Muse file_data must not use the Files API"),
+    )
+
+    body = adapter._build_body(
+        model="muse-spark-1.2-contributor",
+        credentials={},
+        prompt_messages=[
+            UserPromptMessage(
+                content=[
+                    DocumentPromptMessageContent(
+                        format="base64",
+                        base64_data="dGVzdA==",
+                        mime_type=mime_type,
+                        filename=filename,
+                    )
+                ]
+            )
+        ],
+        model_parameters={},
+        tools=None,
+        stop=None,
+        stream=False,
+        user=None,
+    )
+
+    assert body["input"][0]["content"] == [
+        {
+            "type": "input_file",
+            "filename": filename,
+            "file_data": f"data:{mime_type};base64,dGVzdA==",
+        }
+    ]
 
 
 def test_responses_stream_requires_completed_terminal_event() -> None:
@@ -324,6 +344,65 @@ def test_responses_request_does_not_retry_bad_request(monkeypatch) -> None:
         )
 
     assert calls == 1
+
+
+def test_responses_request_retries_media_origin_fetch_failure_three_times(
+    monkeypatch,
+) -> None:
+    class Response:
+        def __init__(self, status_code, text=""):
+            self.status_code = status_code
+            self.text = text
+            self.headers = {}
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    class InvocationLog:
+        def __init__(self):
+            self.response = {}
+            self.events = []
+
+        def set_response(self, **fields):
+            self.response.update(fields)
+
+        def event(self, name, **fields):
+            self.events.append({"name": name, **fields})
+
+    error_text = (
+        "failed to download media at input[40].content[9]: "
+        "URL fetch failed before receiving an origin response"
+    )
+    failed_responses = [Response(400, error_text) for _ in range(3)]
+    success = Response(200)
+    responses = iter([*failed_responses, success])
+    calls = 0
+
+    def post(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return next(responses)
+
+    monkeypatch.setattr("models.llm.native.openai_responses.requests.post", post)
+    invocation_log = InvocationLog()
+
+    result = _adapter()._open_response(
+        model="muse-spark-1.2-contributor",
+        credentials={},
+        request_body={"model": "muse-spark-1.2-contributor"},
+        stream=True,
+        invocation_log=invocation_log,
+    )
+
+    retries = [
+        event for event in invocation_log.events if event["name"] == "request_retry"
+    ]
+    assert result is success
+    assert calls == 4
+    assert all(response.closed for response in failed_responses)
+    assert [event["retry"] for event in retries] == [1, 2, 3]
+    assert all(event["max_retries"] == 3 for event in retries)
 
 
 def test_responses_non_stream_failed_server_response_retries_once(monkeypatch) -> None:

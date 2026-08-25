@@ -151,7 +151,7 @@ class OpenAIResponsesAdapter:
         stream: bool,
         invocation_log=None,
     ) -> requests.Response:
-        for attempt in range(2):
+        for attempt in range(4):
             request_headers = self._request_headers(credentials)
             x_request_id = request_headers.get("x-request-id")
             if invocation_log is not None:
@@ -210,14 +210,15 @@ class OpenAIResponsesAdapter:
             error = http_error("OpenAI Responses", response.status_code, response.text)
             if invocation_log is not None:
                 invocation_log.set_response(error_body=response.text[:2000])
-            if attempt == 0 and error.flyfus_internal_retryable:
+            max_retries = error.flyfus_internal_max_retries
+            if attempt < max_retries and error.flyfus_internal_retryable:
                 if invocation_log is not None:
                     invocation_log.event(
                         "request_retry",
                         adapter="openai_responses",
                         reason=error.flyfus_error_type,
-                        retry=1,
-                        max_retries=1,
+                        retry=attempt + 1,
+                        max_retries=max_retries,
                     )
                 with suppress(Exception):
                     response.close()
@@ -393,9 +394,11 @@ class OpenAIResponsesAdapter:
                 if image_part.detail and model.lower() != "grok-4.6":
                     item["detail"] = image_part.detail.value
                 content_parts.append(item)
-            elif part.type == PromptMessageContentType.DOCUMENT and self._supports_documents(model):
+            elif (
+                part.type == PromptMessageContentType.DOCUMENT
+                and self._supports_documents(model)
+            ):
                 document_part: DocumentPromptMessageContent = part
-                self._validate_document_input(model, document_part)
                 document_url = getattr(document_part, "url", "") or ""
                 if document_part.format == "url" and document_url:
                     content_parts.append(
@@ -406,9 +409,15 @@ class OpenAIResponsesAdapter:
                     )
                     continue
 
-                uploaded_file_id = self._upload_file(credentials, document_part)
+                uploaded_file_id = (
+                    None
+                    if model.lower() == _MUSE_MODEL
+                    else self._upload_file(credentials, document_part)
+                )
                 if uploaded_file_id:
-                    content_parts.append({"type": "input_file", "file_id": uploaded_file_id})
+                    content_parts.append(
+                        {"type": "input_file", "file_id": uploaded_file_id}
+                    )
                 else:
                     content_parts.append(
                         {
@@ -642,15 +651,6 @@ class OpenAIResponsesAdapter:
                 duration_ms=round((time.monotonic() - started_at) * 1000),
             )
         return public_url
-
-    @staticmethod
-    def _validate_document_input(model: str, document: DocumentPromptMessageContent) -> None:
-        if model.lower() != "muse-spark-1.2-contributor":
-            return
-        filename = (document.filename or "").lower()
-        if document.mime_type == "application/pdf" or filename.endswith(".pdf"):
-            return
-        raise InvokeError("Muse Spark 推理文档仅支持 PDF；TXT 和 JSON 文件不会作为模型附件读取。")
 
     @staticmethod
     def _supports_image(model: str, image: ImagePromptMessageContent) -> bool:

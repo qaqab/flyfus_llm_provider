@@ -15,6 +15,9 @@ class FlyfusContextTag(StrEnum):
     # Removed from model content after being consumed by model parameter parsing.
     SETTING = "FLYFUS_SETTING"
 
+    # Removed after its payload is injected into the matching model message.
+    MEMORY = "FLYFUS_MEMORY"
+
 
 class FlyfusSettingType(StrEnum):
     AI_MODE = "ai_mode"

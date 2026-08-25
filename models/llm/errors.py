@@ -11,6 +11,7 @@ class FlyfusInvokeError(InvokeError):
     flyfus_user_message = "模型服务暂时不可用，请稍后重试。"
     flyfus_retryable = False
     flyfus_internal_retryable = False
+    flyfus_internal_max_retries = 1
 
 
 class UpstreamTimeoutError(FlyfusInvokeError):
@@ -51,6 +52,14 @@ class UpstreamBadRequestError(FlyfusInvokeError):
     flyfus_user_message = "本次请求暂时无法处理，请调整内容后重试；如仍失败，请联系管理员。"
 
 
+class UpstreamMediaFetchError(UpstreamBadRequestError):
+    flyfus_error_type = "upstream_media_fetch_error"
+    flyfus_user_message = "模型读取图片失败，请稍后重试。"
+    flyfus_retryable = True
+    flyfus_internal_retryable = True
+    flyfus_internal_max_retries = 3
+
+
 class UpstreamResponseIncompleteError(FlyfusInvokeError):
     flyfus_error_type = "upstream_response_incomplete"
     flyfus_user_message = "模型未能生成完整回答，请调整请求后重试。"
@@ -82,6 +91,7 @@ def request_error(provider: str, error: requests.RequestException) -> FlyfusInvo
 
 def http_error(provider: str, status_code: int, response_text: str) -> FlyfusInvokeError:
     message = f"{provider} 请求失败，状态码：{status_code}，响应：{response_text[:2000]}"
+    normalized = response_text.lower()
     if status_code in {401, 403}:
         return UpstreamAuthError(message)
     if status_code == 408:
@@ -90,6 +100,12 @@ def http_error(provider: str, status_code: int, response_text: str) -> FlyfusInv
         return UpstreamRateLimitedError(message)
     if status_code >= 500:
         return UpstreamServerError(message)
+    if (
+        status_code == 400
+        and "failed to download media" in normalized
+        and "url fetch failed before receiving an origin response" in normalized
+    ):
+        return UpstreamMediaFetchError(message)
     return UpstreamBadRequestError(message)
 
 

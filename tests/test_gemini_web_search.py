@@ -524,7 +524,7 @@ def test_native_gemini_uses_url_from_json_context() -> None:
 
 def test_context_regex_classifies_image_and_file_urls() -> None:
     image_url = "https://example.com/a.jpg?signature=abc"
-    file_url = "https://example.com/report.pdf"
+    file_url = "https://example.com/report.md"
 
     context_urls = _extract_context_urls(
         f"<FLYFUS_CONTEXT>image: {image_url}\nfile: {file_url}</FLYFUS_CONTEXT>"
@@ -540,7 +540,7 @@ def test_context_regex_ignores_url_without_hostname() -> None:
 def test_context_and_file_tags_are_supported_and_urls_are_deduplicated() -> None:
     first_image_url = "https://example.com/a.jpg"
     second_image_url = "https://example.com/b.png"
-    file_url = "https://example.com/report.pdf"
+    file_url = "https://example.com/report.md"
     prompt_messages = [
         ToolPromptMessage(
             name="read_file",
@@ -557,6 +557,30 @@ def test_context_and_file_tags_are_supported_and_urls_are_deduplicated() -> None
 
     assert len(prompt_messages) == 2
     assert len(prompt_messages[-1].content) == 4
+
+
+def test_context_does_not_attach_pdf_or_spreadsheet_urls() -> None:
+    content = "".join(
+        f"<FLYFUS_FILE>[{url}]({url})</FLYFUS_FILE>"
+        for url in (
+            "https://example.com/report.pdf",
+            "https://example.com/data.csv",
+            "https://example.com/data.xls",
+            "https://example.com/data.xlsx",
+        )
+    )
+    prompt_messages = [
+        ToolPromptMessage(
+            name="read_file",
+            tool_call_id="read-file-1",
+            content=content,
+        )
+    ]
+
+    inject_context_from_tool_messages(prompt_messages, include_files=True)
+
+    assert len(prompt_messages) == 1
+    assert prompt_messages[0].content == content
 
 
 def test_native_gemini_omits_empty_history_messages() -> None:

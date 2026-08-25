@@ -5,6 +5,7 @@ from models.llm.errors import (
     UpstreamAuthError,
     UpstreamBadRequestError,
     UpstreamConnectionError,
+    UpstreamMediaFetchError,
     UpstreamRateLimitedError,
     UpstreamServerError,
     UpstreamTimeoutError,
@@ -38,6 +39,19 @@ def test_request_errors_distinguish_timeout_and_connection() -> None:
     assert isinstance(connection, UpstreamConnectionError)
     assert timeout.flyfus_internal_retryable is True
     assert connection.flyfus_internal_retryable is True
+
+
+def test_media_origin_fetch_failure_is_retryable_three_times() -> None:
+    error = http_error(
+        "provider",
+        400,
+        "failed to download media at input[40].content[9]: "
+        "URL fetch failed before receiving an origin response",
+    )
+
+    assert isinstance(error, UpstreamMediaFetchError)
+    assert error.flyfus_internal_retryable is True
+    assert error.flyfus_internal_max_retries == 3
 
 
 def test_failed_response_uses_specific_type_when_upstream_provides_reason() -> None:

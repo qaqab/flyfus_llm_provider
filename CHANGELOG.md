@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.74
+
+- Allow Muse Spark TXT and JSON document attachments through the Responses API after live `input_file.file_data` verification.
+
 ## 0.0.72
 
 - Unify model-call tracking around one stable `log_id`, unique `x-request-id` values per HTTP attempt, and a `response_id` read only from `x-litellm-call-id`.

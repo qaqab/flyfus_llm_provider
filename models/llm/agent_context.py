@@ -22,11 +22,11 @@ _CONTEXT_PATTERN = re.compile(
     re.DOTALL,
 )
 _IMAGE_URL_SUFFIXES = (".png", ".jpg", ".jpeg")
-_FILE_URL_SUFFIXES = (".pdf", ".md", ".xlsx", ".csv", ".txt", ".html")
+_FILE_URL_SUFFIXES = (".md", ".txt", ".html")
 # Context is intentionally treated as plain text. This also finds URLs inside JSON,
 # lists, and prose without depending on a field name or JSON parsing.
 _CONTEXT_URL_PATTERN = re.compile(
-    r"https?://[^\s<>\"']+?\.(?:png|jpe?g|pdf|md|xlsx|csv|txt|html)"
+    r"https?://[^\s<>\"']+?\.(?:png|jpe?g|md|txt|html)"
     r"(?:[?#][^\s<>\"']*)?(?=$|[\s<>\"'),.;:!?\]}])",
     re.IGNORECASE,
 )
