@@ -14,9 +14,9 @@ from dify_plugin.entities.model.message import (
 
 from models.llm.context_tags import FlyfusContextTag
 
-# Public context and file tags use the same URL extraction rules. The backreference
+# Only FLYFUS_CONTEXT carries attachments into the model request. The backreference
 # keeps an opening tag from matching a different closing tag.
-_ATTACHMENT_TAGS = (FlyfusContextTag.CONTEXT, FlyfusContextTag.FILE)
+_ATTACHMENT_TAGS = (FlyfusContextTag.CONTEXT,)
 _CONTEXT_PATTERN = re.compile(
     rf"<(?P<tag>{'|'.join(_ATTACHMENT_TAGS)})>(?P<content>.*?)</(?P=tag)>",
     re.DOTALL,

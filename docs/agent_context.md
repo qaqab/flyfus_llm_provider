@@ -17,11 +17,11 @@ file1: "https://example.com/a.md"
 
 字段：
 
-- `FLYFUS_CONTEXT` 和 `FLYFUS_FILE` 返回给前端，同时保留在模型内容中。
+- 只有 `FLYFUS_CONTEXT` 中的 URL 会被提取并注入模型；`FLYFUS_FILE` 保留为普通文本，模型需要读取时调用 `read_file` 转换为 `FLYFUS_CONTEXT`。
 - `FLYFUS_INTERNAL_CONTEXT` 预留给不返回前端、但保留在模型内容中的场景；插件暂不从中提取附件。
 - `FLYFUS_SETTING` 不作为模型内容，只用于模型参数和日志字段解析。
-- `FLYFUS_CONTEXT` 和 `FLYFUS_FILE` 内部都按正则扫描公网 URL，不要求 JSON 或字段名。
-- 这两个附件标签内部可以是普通文本、JSON、列表或它们的组合。
+- `FLYFUS_CONTEXT` 内部按正则扫描公网 URL，不要求 JSON 或字段名。
+- `FLYFUS_CONTEXT` 内部可以是普通文本、JSON、列表或它们的组合。
 - 图片支持 PNG、JPG、JPEG；文件附件支持 MD、TXT、HTML。
 - PDF、CSV、XLS、XLSX URL 保留在消息文本中，但不会作为文件附件注入模型。
 - 同一次模型调用中，相同 URL 只会作为一个附件注入。

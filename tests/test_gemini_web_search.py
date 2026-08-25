@@ -537,17 +537,17 @@ def test_context_regex_ignores_url_without_hostname() -> None:
     assert _extract_context_urls("<FLYFUS_CONTEXT>http:///a.jpg</FLYFUS_CONTEXT>") == []
 
 
-def test_context_and_file_tags_are_supported_and_urls_are_deduplicated() -> None:
+def test_only_context_tag_is_supported_and_urls_are_deduplicated() -> None:
     first_image_url = "https://example.com/a.jpg"
     second_image_url = "https://example.com/b.png"
-    file_url = "https://example.com/report.md"
+    ignored_file_image_url = "https://example.com/file-image.png"
     prompt_messages = [
         ToolPromptMessage(
             name="read_file",
             tool_call_id="read-file-1",
             content=(
                 f"<FLYFUS_CONTEXT>{first_image_url} {second_image_url}</FLYFUS_CONTEXT>"
-                f"<FLYFUS_FILE>{file_url}</FLYFUS_FILE>"
+                f"<FLYFUS_FILE>{ignored_file_image_url}</FLYFUS_FILE>"
                 f"<FLYFUS_CONTEXT>{first_image_url}</FLYFUS_CONTEXT>"
             ),
         )
@@ -556,7 +556,11 @@ def test_context_and_file_tags_are_supported_and_urls_are_deduplicated() -> None
     inject_context_from_tool_messages(prompt_messages, include_files=True)
 
     assert len(prompt_messages) == 2
-    assert len(prompt_messages[-1].content) == 4
+    assert len(prompt_messages[-1].content) == 3
+    assert all(
+        getattr(part, "data", "") != ignored_file_image_url
+        for part in prompt_messages[-1].content
+    )
 
 
 def test_context_does_not_attach_pdf_or_spreadsheet_urls() -> None:
