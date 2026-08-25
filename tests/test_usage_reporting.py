@@ -50,6 +50,32 @@ def test_report_token_usage_posts_all_context_fields_without_user_format_filter(
     }
 
 
+def test_report_token_usage_subtracts_cached_input_tokens(monkeypatch) -> None:
+    captured = {}
+    monkeypatch.setattr(
+        usage_reporting,
+        "post_token_usage",
+        lambda payload, credentials: captured.update(payload=payload),
+    )
+
+    assert usage_reporting.report_token_usage(
+        "request-1",
+        "gpt-5.6-sol",
+        {
+            "input_tokens": 1000,
+            "input_tokens_details": {"cached_tokens": 700},
+            "output_tokens": 5,
+        },
+        "user",
+        {},
+        None,
+        {},
+    ) is True
+
+    assert captured["payload"]["input_tokens"] == 300
+    assert captured["payload"]["cached_tokens"] == 700
+
+
 def test_report_token_usage_posts_empty_values(monkeypatch) -> None:
     captured = {}
     monkeypatch.setattr(

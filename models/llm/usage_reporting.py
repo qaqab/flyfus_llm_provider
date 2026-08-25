@@ -49,10 +49,16 @@ def normalize_upstream_usage(raw_usage: Optional[dict]) -> dict:
 
 def to_geo_payload(request_id: str, model: str, raw_usage: Optional[dict]) -> dict:
     """Build the Geo token-usage request body from upstream usage."""
+    normalized = normalize_upstream_usage(raw_usage)
+    input_tokens = normalized["input_tokens"]
+    cached_tokens = normalized["cached_tokens"]
+    if isinstance(input_tokens, (int, float)) and isinstance(cached_tokens, (int, float)):
+        input_tokens = max(input_tokens - cached_tokens, 0)
     return {
         "request_id": request_id,
         "model": model,
-        **normalize_upstream_usage(raw_usage),
+        **normalized,
+        "input_tokens": input_tokens,
     }
 
 
