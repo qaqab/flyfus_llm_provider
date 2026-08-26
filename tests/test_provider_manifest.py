@@ -264,7 +264,7 @@ def test_minimax_m3_exposes_only_verified_parameters() -> None:
     assert position.count("minimax-m3") == 1
 
 
-def test_muse_spark_contributor_manifest() -> None:
+def test_muse_spark_contributor_exposes_only_verified_capabilities() -> None:
     plugin_root = Path(__file__).parents[1]
     model_file = plugin_root / "models" / "llm" / "muse-spark-1.2-contributor.yaml"
     model = yaml.safe_load(model_file.read_text(encoding="utf-8"))
@@ -304,14 +304,7 @@ def test_muse_spark_contributor_manifest() -> None:
     assert rules["presence_penalty"]["min"] == -2
     assert rules["presence_penalty"]["max"] == 2
     assert rules["response_format"]["options"] == ["text", "json_object", "json_schema"]
-    assert rules["reasoning_effort"]["options"] == [
-        "minimal",
-        "low",
-        "medium",
-        "high",
-        "xhigh",
-        "max",
-    ]
+    assert rules["reasoning_effort"]["options"] == ["minimal", "low", "medium", "high", "xhigh"]
     assert rules["reasoning_effort"]["default"] == "high"
     assert rules["enable_web_search"]["default"] is False
     assert model["pricing"]["input"] == "0.10"
