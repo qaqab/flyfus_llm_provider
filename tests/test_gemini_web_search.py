@@ -74,9 +74,11 @@ def test_native_gemini_sends_unique_request_id(monkeypatch) -> None:
         stop=None,
         stream=False,
         user=None,
+        metadata={"session_id": "run-1"},
     )
 
     assert captured["headers"]["x-request-id"] != "log-123"
+    assert captured["json"]["metadata"] == {"session_id": "run-1"}
 
 
 def test_native_gemini_request_retries_server_error_once(monkeypatch) -> None:

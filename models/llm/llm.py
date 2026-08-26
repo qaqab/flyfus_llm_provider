@@ -647,6 +647,11 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
         route = apply_model_route(model, model_parameters, prompt_messages)
         apply_flyfus_memory(prompt_messages)
         flyfus_settings = extract_flyfus_settings(prompt_messages)
+        request_metadata = (
+            {"session_id": flyfus_settings.workflow_run_id}
+            if flyfus_settings.workflow_run_id
+            else None
+        )
         ai_mode = apply_ai_mode(
             route.model,
             route.parameters,
@@ -800,6 +805,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                     model_parameters=dict(effective_model_parameters),
                     tools=tools,
                     stop=stop,
+                    metadata=request_metadata,
                 )
                 invocation_log.set_request(
                     model_parameters_final=self._normalize_model_parameters(model, dict(effective_model_parameters)),
@@ -830,6 +836,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                             stream=stream,
                             user=user,
                             invocation_log=invocation_log,
+                            metadata=request_metadata,
                         )
 
                 if stream:
@@ -913,6 +920,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                         user=None,
                         invocation_log=invocation_log,
                         mirrored_image_cache=mirrored_image_cache,
+                        metadata=request_metadata,
                     )
                     invocation_log.set_request(
                         model_parameters_final=effective_model_parameters,
@@ -1026,6 +1034,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                     stop=stop,
                     stream=stream,
                     user=None,
+                    metadata=request_metadata,
                 )
                 invocation_log.set_replay_request(
                     endpoint=self._endpoint_url(normalized_credentials, "chat/completions"),
@@ -1131,6 +1140,7 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
         stop: Optional[list[str]],
         stream: bool,
         user: Optional[str],
+        metadata: Optional[dict] = None,
     ) -> dict:
         """Mirror Dify's OpenAI-compatible request serialization for replay logs."""
         parameters = deepcopy(model_parameters)
@@ -1157,6 +1167,8 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
                 for message in prompt_messages
             ],
         }
+        if metadata:
+            body["metadata"] = dict(metadata)
         if tools:
             if credentials.get("function_calling_type", "no_call") == "function_call":
                 body["functions"] = [

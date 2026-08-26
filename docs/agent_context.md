@@ -65,6 +65,10 @@ User 消息使用 `type: "log_context"` 写入调用日志：
 模型调用原有的 Dify `user` 参数也会与 `log_id` 同级记录，与 `user_id` 相互独立。
 Tool 消息中的 `log_context` 会被删除，但不会写入日志。
 
+插件使用最近一条包含有效 `log_context` Setting 的 User 消息。Agent 后续追加的不含
+Setting 的自动重试 User 消息不会清空已经解析的日志上下文。`workflow_run_id` 同时作为
+每次上游模型请求的 `metadata.session_id`。
+
 模型调用成功完成后，Token 用量接口还会收到 `user_id`、`app_id`、`workflow_id`、
 `workflow_run_id`、`conversation_id`、Dify `user` 和 AI Mode 末段的 `mode`（例如 `fast`、
 `deep`）。这些字段不做格式判断，缺失时传空字符串。

@@ -38,10 +38,30 @@ def test_responses_system_message_omits_type_and_request_omits_user() -> None:
         stop=None,
         stream=False,
         user="af158386-224e-4dba-b382-5a3aa1209fde",
+        metadata={"session_id": "run-1"},
     )
 
     assert body["input"] == [{"role": "system", "content": "You are helpful."}]
+    assert body["metadata"] == {"session_id": "run-1"}
     assert "user" not in body
+
+
+def test_openai_compatible_request_includes_session_metadata() -> None:
+    model = object.__new__(FlyfusLargeLanguageModel)
+
+    body = model._build_openai_compatible_replay_body(
+        model="other-model",
+        credentials={},
+        prompt_messages=[UserPromptMessage(content="hello")],
+        model_parameters={},
+        tools=None,
+        stop=None,
+        stream=False,
+        user=None,
+        metadata={"session_id": "run-1"},
+    )
+
+    assert body["metadata"] == {"session_id": "run-1"}
 
 
 def test_ling_responses_uses_output_budget_and_explicit_none_effort() -> None:

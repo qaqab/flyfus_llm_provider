@@ -170,7 +170,7 @@ def test_log_context_from_tool_is_removed_but_not_recorded() -> None:
     assert message.content == ""
 
 
-def test_log_context_from_user_history_is_not_reused() -> None:
+def test_latest_user_log_context_is_reused_after_agent_retry() -> None:
     messages = [
         UserPromptMessage(
             content=(
@@ -178,20 +178,29 @@ def test_log_context_from_user_history_is_not_reused() -> None:
                 '"workflow_run_id":"old-run"}</FLYFUS_SETTING>'
             )
         ),
-        UserPromptMessage(content="new request"),
+        UserPromptMessage(
+            content=(
+                'current request\n<FLYFUS_SETTING>{"type":"log_context",'
+                '"user_id":"current-user","app_id":"current-app",'
+                '"workflow_id":"current-workflow","workflow_run_id":"current-run",'
+                '"conversation_id":"current-conversation"}</FLYFUS_SETTING>'
+            )
+        ),
+        UserPromptMessage(content="agent-generated retry request"),
     ]
 
     settings = extract_flyfus_settings(messages)
 
     assert settings.log_context() == {
-        "user_id": "",
-        "app_id": "",
-        "workflow_id": "",
-        "workflow_run_id": "",
-        "conversation_id": "",
+        "user_id": "current-user",
+        "app_id": "current-app",
+        "workflow_id": "current-workflow",
+        "workflow_run_id": "current-run",
+        "conversation_id": "current-conversation",
     }
     assert messages[0].content == ""
-    assert messages[1].content == "new request"
+    assert messages[1].content == "current request"
+    assert messages[2].content == "agent-generated retry request"
 
 
 def test_non_json_setting_is_removed_without_legacy_ai_mode_parsing() -> None:

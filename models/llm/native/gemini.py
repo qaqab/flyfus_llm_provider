@@ -65,10 +65,13 @@ class GeminiNativeDocumentAdapter:
         stream: bool,
         user: Optional[str],
         invocation_log=None,
+        metadata: Optional[dict] = None,
     ) -> Union[LLMResult, Generator]:
         method = "streamGenerateContent" if stream else "generateContent"
         request_url = self._endpoint_url(credentials, f"models/{model}:{method}")
-        request_body = self.build_body(model, prompt_messages, model_parameters, tools, stop)
+        request_body = self.build_body(
+            model, prompt_messages, model_parameters, tools, stop, metadata
+        )
         if invocation_log is not None:
             invocation_log.set_replay_request(endpoint=request_url, body=request_body)
         params = {"key": credentials["api_key"]}
@@ -149,9 +152,12 @@ class GeminiNativeDocumentAdapter:
         model_parameters: dict,
         tools: Optional[list[PromptMessageTool]],
         stop: Optional[list[str]],
+        metadata: Optional[dict] = None,
     ) -> dict:
         normalized_parameters = self._normalize_model_parameters(model, model_parameters)
         body: dict[str, Any] = {"contents": self._convert_messages(prompt_messages)}
+        if metadata:
+            body["metadata"] = dict(metadata)
 
         system_instruction = self._system_instruction(prompt_messages)
         if system_instruction:

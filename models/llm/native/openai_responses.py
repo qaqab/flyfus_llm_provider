@@ -95,6 +95,7 @@ class OpenAIResponsesAdapter:
         user: Optional[str],
         invocation_log=None,
         request_body: Optional[dict] = None,
+        metadata: Optional[dict] = None,
     ) -> Union[LLMResult, Generator]:
         if request_body is None:
             request_body = self._build_body(
@@ -107,6 +108,7 @@ class OpenAIResponsesAdapter:
                 stream=stream,
                 user=user,
                 invocation_log=invocation_log,
+                metadata=metadata,
             )
         if invocation_log is not None:
             invocation_log.set_replay_request(
@@ -243,6 +245,7 @@ class OpenAIResponsesAdapter:
         user: Optional[str],
         invocation_log=None,
         mirrored_image_cache: Optional[dict[str, str]] = None,
+        metadata: Optional[dict] = None,
     ) -> dict:
         normalized_parameters = self._normalize_model_parameters(model, model_parameters)
         body: dict[str, Any] = {
@@ -256,6 +259,8 @@ class OpenAIResponsesAdapter:
             ),
             "stream": stream,
         }
+        if metadata:
+            body["metadata"] = dict(metadata)
 
         if stop:
             body["stop"] = stop

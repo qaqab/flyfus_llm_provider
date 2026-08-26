@@ -47,11 +47,6 @@ def extract_flyfus_settings(prompt_messages: list[PromptMessage]) -> FlyfusSetti
     ai_mode_reference: str | None = None
     ai_mode_name = ""
     log_context = {field: "" for field in _LOG_CONTEXT_FIELDS}
-    latest_user_message = next(
-        (message for message in reversed(prompt_messages) if isinstance(message, UserPromptMessage)),
-        None,
-    )
-
     for message in prompt_messages:
         if not isinstance(message, (UserPromptMessage, ToolPromptMessage)):
             continue
@@ -75,7 +70,7 @@ def extract_flyfus_settings(prompt_messages: list[PromptMessage]) -> FlyfusSetti
                     if match := _AI_MODE_REFERENCE_PATTERN.fullmatch(reference):
                         ai_mode_reference = reference
                         ai_mode_name = match.group("mode")
-            elif setting_type == FlyfusSettingType.LOG_CONTEXT and message is latest_user_message:
+            elif setting_type == FlyfusSettingType.LOG_CONTEXT and isinstance(message, UserPromptMessage):
                 log_context = _log_context(payload)
 
     return FlyfusSettings(
