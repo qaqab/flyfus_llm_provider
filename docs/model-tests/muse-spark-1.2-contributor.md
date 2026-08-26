@@ -115,7 +115,7 @@ features:
 - `temperature`：默认 `1`，官网范围 `0..2`；
 - `top_p`：范围 `0.01..1`；
 - `max_tokens`：Dify 页面名称；发送时转换为 Chat 的 `max_completion_tokens` 或 Responses 的 `max_output_tokens`；
-- `reasoning_effort`：`minimal`、`low`、`medium`、`high`、`xhigh`；Muse 不支持 `none`；
+- `reasoning_effort`：`minimal`、`low`、`medium`、`high`、`xhigh`、`max`；Muse 不支持 `none`；其中 `max` 已在插件开放，但尚未完成直连验证；
 - `enable_web_search`：默认关闭；开启时经 Responses API 添加 `web_search` 工具；
 - `frequency_penalty`、`presence_penalty`：`-2..2` 被接受，实际效果仍需统计检验；
 - `response_format`：提供 `text`、`json_object` 和经 Responses 实测的 `json_schema`。

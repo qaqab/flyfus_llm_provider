@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.82
+
+- Expose the `max` reasoning-effort option for `muse-spark-1.2-contributor`.
+
 ## 0.0.74
 
 - Allow Muse Spark TXT and JSON document attachments through the Responses API after live `input_file.file_data` verification.

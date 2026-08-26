@@ -114,7 +114,7 @@ def test_muse_uses_responses_with_official_capabilities() -> None:
         prompt_messages=[SystemPromptMessage(content="You are helpful.")],
         model_parameters={
             "max_completion_tokens": 128000,
-            "reasoning_effort": "xhigh",
+            "reasoning_effort": "max",
             "enable_web_search": True,
             "response_format": "json_schema",
             "json_schema": {
@@ -135,7 +135,7 @@ def test_muse_uses_responses_with_official_capabilities() -> None:
     )
 
     assert body["max_output_tokens"] == 128000
-    assert body["reasoning"] == {"effort": "xhigh"}
+    assert body["reasoning"] == {"effort": "max"}
     assert body["tools"] == [{"type": "web_search"}]
     assert body["text"]["format"]["type"] == "json_schema"
 
