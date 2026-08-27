@@ -63,13 +63,22 @@ def test_openai_compatible_stream_records_sent_request_and_response_ids(monkeypa
     stream = model._invoke(
         model="qwen3.6-flash",
         credentials={"endpoint_url": "https://example.test/", "api_key": "key"},
-        prompt_messages=[UserPromptMessage(content="hello")],
+        prompt_messages=[
+            UserPromptMessage(
+                content=(
+                    'hello<FLYFUS_SETTING>{"type":"log_context",'
+                    '"workflow_run_id":"workflow-run-1",'
+                    '"chat_session_id":"chat-session-1"}</FLYFUS_SETTING>'
+                )
+            )
+        ],
         model_parameters={},
         stream=True,
     )
     list(stream)
 
     request_id = posted["headers"]["x-request-id"]
+    assert posted["json"]["metadata"] == {"session_id": "chat-session-1"}
     assert logged["x_request_ids"] == [request_id]
     assert logged["response_id"] == "litellm-stream-1"
 

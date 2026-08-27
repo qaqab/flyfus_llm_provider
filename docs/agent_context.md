@@ -56,7 +56,7 @@ User 消息使用 `type: "log_context"` 写入调用日志：
 
 ```text
 <FLYFUS_SETTING>
-{"type":"log_context","user_id":"user-1","app_id":"app-1","workflow_id":"workflow-1","workflow_run_id":"run-1","conversation_id":"conversation-1"}
+{"type":"log_context","user_id":"user-1","app_id":"app-1","workflow_id":"workflow-1","workflow_run_id":"run-1","conversation_id":"conversation-1","chat_session_id":"chat-1"}
 </FLYFUS_SETTING>
 ```
 
@@ -66,8 +66,8 @@ User 消息使用 `type: "log_context"` 写入调用日志：
 Tool 消息中的 `log_context` 会被删除，但不会写入日志。
 
 插件使用最近一条包含有效 `log_context` Setting 的 User 消息。Agent 后续追加的不含
-Setting 的自动重试 User 消息不会清空已经解析的日志上下文。`workflow_run_id` 同时作为
-每次上游模型请求的 `metadata.session_id`。
+Setting 的自动重试 User 消息不会清空已经解析的日志上下文。`chat_session_id` 作为每次
+上游模型请求的 `metadata.session_id`；缺失时不发送 `metadata`，不会回退到 `workflow_run_id`。
 
 模型调用成功完成后，Token 用量接口还会收到 `user_id`、`app_id`、`workflow_id`、
 `workflow_run_id`、`conversation_id`、Dify `user` 和 AI Mode 末段的 `mode`（例如 `fast`、

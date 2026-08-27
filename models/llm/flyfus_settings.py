@@ -32,6 +32,7 @@ _LOG_CONTEXT_FIELDS = (
 class FlyfusSettings:
     ai_mode_reference: str | None = None
     ai_mode_name: str = ""
+    chat_session_id: str = ""
     user_id: str = ""
     app_id: str = ""
     workflow_id: str = ""
@@ -46,6 +47,7 @@ def extract_flyfus_settings(prompt_messages: list[PromptMessage]) -> FlyfusSetti
     """Remove JSON setting blocks and return their model and logging controls."""
     ai_mode_reference: str | None = None
     ai_mode_name = ""
+    chat_session_id = ""
     log_context = {field: "" for field in _LOG_CONTEXT_FIELDS}
     for message in prompt_messages:
         if not isinstance(message, (UserPromptMessage, ToolPromptMessage)):
@@ -72,10 +74,13 @@ def extract_flyfus_settings(prompt_messages: list[PromptMessage]) -> FlyfusSetti
                         ai_mode_name = match.group("mode")
             elif setting_type == FlyfusSettingType.LOG_CONTEXT and isinstance(message, UserPromptMessage):
                 log_context = _log_context(payload)
+                value = payload.get("chat_session_id")
+                chat_session_id = value.strip() if isinstance(value, str) else ""
 
     return FlyfusSettings(
         ai_mode_reference=ai_mode_reference,
         ai_mode_name=ai_mode_name,
+        chat_session_id=chat_session_id,
         **log_context,
     )
 

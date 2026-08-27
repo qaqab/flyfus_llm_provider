@@ -133,12 +133,14 @@ def test_log_context_is_extracted_from_user_and_missing_fields_are_empty() -> No
             "分析这个 Listing\n"
             '<FLYFUS_SETTING>{"type":"log_context","user_id":" user-1 ",'
             '"workflow_id":"workflow-1","workflow_run_id":"run-1",'
+            '"chat_session_id":" chat-1 ",'
             '"conversation_id":"conversation-1"}</FLYFUS_SETTING>'
         )
     )
 
     settings = extract_flyfus_settings([message])
 
+    assert settings.chat_session_id == "chat-1"
     assert settings.log_context() == {
         "user_id": "user-1",
         "app_id": "",
@@ -175,7 +177,8 @@ def test_latest_user_log_context_is_reused_after_agent_retry() -> None:
         UserPromptMessage(
             content=(
                 '<FLYFUS_SETTING>{"type":"log_context","user_id":"old-user",'
-                '"workflow_run_id":"old-run"}</FLYFUS_SETTING>'
+                '"workflow_run_id":"old-run",'
+                '"chat_session_id":"old-chat"}</FLYFUS_SETTING>'
             )
         ),
         UserPromptMessage(
@@ -183,6 +186,7 @@ def test_latest_user_log_context_is_reused_after_agent_retry() -> None:
                 'current request\n<FLYFUS_SETTING>{"type":"log_context",'
                 '"user_id":"current-user","app_id":"current-app",'
                 '"workflow_id":"current-workflow","workflow_run_id":"current-run",'
+                '"chat_session_id":"current-chat",'
                 '"conversation_id":"current-conversation"}</FLYFUS_SETTING>'
             )
         ),
@@ -191,6 +195,7 @@ def test_latest_user_log_context_is_reused_after_agent_retry() -> None:
 
     settings = extract_flyfus_settings(messages)
 
+    assert settings.chat_session_id == "current-chat"
     assert settings.log_context() == {
         "user_id": "current-user",
         "app_id": "current-app",

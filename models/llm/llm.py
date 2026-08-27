@@ -648,8 +648,8 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
         apply_flyfus_memory(prompt_messages)
         flyfus_settings = extract_flyfus_settings(prompt_messages)
         request_metadata = (
-            {"session_id": flyfus_settings.workflow_run_id}
-            if flyfus_settings.workflow_run_id
+            {"session_id": flyfus_settings.chat_session_id}
+            if flyfus_settings.chat_session_id
             else None
         )
         ai_mode = apply_ai_mode(
