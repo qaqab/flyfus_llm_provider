@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.86
+
+- Add the live-tested `muse-spark-1.3-contributor` model with Responses API routing, reasoning, vision, document, tool-call, structured-output, streaming, and web-search support.
+
 ## 0.0.74
 
 - Allow Muse Spark TXT and JSON document attachments through the Responses API after live `input_file.file_data` verification.

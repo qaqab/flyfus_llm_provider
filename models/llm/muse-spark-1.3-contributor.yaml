@@ -1,0 +1,77 @@
+model: muse-spark-1.3-contributor
+label:
+  zh_Hans: muse-spark-1.3-contributor
+  en_US: muse-spark-1.3-contributor
+model_type: llm
+features:
+- agent-thought
+- vision
+- document
+- tool-call
+- multi-tool-call
+- stream-tool-call
+model_properties:
+  mode: chat
+  # Flyfus LiteLLM model metadata reports a 1,000,000-token input limit.
+  context_size: 1000000
+parameter_rules:
+- name: temperature
+  use_template: temperature
+  default: 1
+  min: 0
+  max: 2
+- name: top_p
+  use_template: top_p
+  default: 1
+  min: 0.01
+  max: 1
+- name: max_tokens
+  use_template: max_tokens
+  default: 128000
+  min: 512
+  max: 128000
+- name: frequency_penalty
+  use_template: frequency_penalty
+  default: 0
+  min: -2
+  max: 2
+- name: presence_penalty
+  use_template: presence_penalty
+  default: 0
+  min: -2
+  max: 2
+- name: response_format
+  use_template: response_format
+  options:
+  - text
+  - json_object
+  - json_schema
+- name: json_schema
+  use_template: json_schema
+- name: reasoning_effort
+  label:
+    en_US: Reasoning effort
+    zh_Hans: 推理强度
+  type: string
+  required: false
+  default: high
+  options:
+  - minimal
+  - low
+  - medium
+  - high
+  - xhigh
+- name: enable_web_search
+  label:
+    zh_Hans: 联网搜索
+    en_US: Web search
+  type: boolean
+  required: false
+  default: false
+pricing:
+  input: '0.10'
+  output: '0.20'
+  unit: '0.000001'
+  currency: USD
+extra:
+  token_param_name: max_completion_tokens

@@ -25,8 +25,11 @@ def _adapter() -> OpenAIResponsesAdapter:
     )
 
 
+@pytest.mark.parametrize(
+    "model", ["muse-spark-1.2-contributor", "muse-spark-1.3-contributor"]
+)
 def test_muse_mirrors_external_images_concurrently_and_preserves_order(
-    monkeypatch,
+    monkeypatch, model: str
 ) -> None:
     source_one = "https://m.media-amazon.com/images/I/one.jpg"
     source_two = "https://example.com/two.png?token=secret"
@@ -72,7 +75,7 @@ def test_muse_mirrors_external_images_concurrently_and_preserves_order(
     cache = {}
 
     body = _adapter()._build_body(
-        model="muse-spark-1.2-contributor",
+        model=model,
         credentials={
             "oss_api_base_url": "https://upload.example.test",
             "oss_api_token": "secret",

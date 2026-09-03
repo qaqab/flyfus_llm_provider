@@ -9,6 +9,7 @@ HTTP 200，而是确认 Dify 暴露的每项参数和能力都产生了可观察
 
 - [MiniMax M3](model-tests/minimax-m3.md)
 - [Muse Spark 1.2 Contributor](model-tests/muse-spark-1.2-contributor.md)
+- [Muse Spark 1.3 Contributor](model-tests/muse-spark-1.3-contributor.md)
 
 新增模型时复制实例表格结构并替换测试证据。
 

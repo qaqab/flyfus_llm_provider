@@ -37,7 +37,9 @@ from models.llm.native.base import file_bytes
 from models.llm.parameter_conversion import build_web_search_tool
 
 
-_MUSE_MODEL = "muse-spark-1.2-contributor"
+_MUSE_MODELS = frozenset(
+    {"muse-spark-1.2-contributor", "muse-spark-1.3-contributor"}
+)
 _TRUSTED_IMAGE_HOST = "o1.flyfus.com"
 
 
@@ -416,7 +418,7 @@ class OpenAIResponsesAdapter:
 
                 uploaded_file_id = (
                     None
-                    if model.lower() == _MUSE_MODEL
+                    if model.lower() in _MUSE_MODELS
                     else self._upload_file(credentials, document_part)
                 )
                 if uploaded_file_id:
@@ -441,7 +443,7 @@ class OpenAIResponsesAdapter:
         invocation_log=None,
         mirrored_image_cache: Optional[dict[str, str]] = None,
     ) -> dict[str, str]:
-        if model.lower() != _MUSE_MODEL:
+        if model.lower() not in _MUSE_MODELS:
             return {}
 
         cache = mirrored_image_cache if mirrored_image_cache is not None else {}

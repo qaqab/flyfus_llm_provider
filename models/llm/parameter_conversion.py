@@ -43,6 +43,7 @@ WEB_SEARCH_MODELS = frozenset(
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "muse-spark-1.2-contributor",
+        "muse-spark-1.3-contributor",
     }
 )
 

@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 import yaml
 from dify_plugin.entities.model.schema import AIModelEntity
 
@@ -264,14 +265,23 @@ def test_minimax_m3_exposes_only_verified_parameters() -> None:
     assert position.count("minimax-m3") == 1
 
 
-def test_muse_spark_contributor_exposes_only_verified_capabilities() -> None:
+@pytest.mark.parametrize(
+    ("model_name", "context_size"),
+    [
+        ("muse-spark-1.2-contributor", 1048576),
+        ("muse-spark-1.3-contributor", 1000000),
+    ],
+)
+def test_muse_spark_contributor_exposes_only_verified_capabilities(
+    model_name: str, context_size: int
+) -> None:
     plugin_root = Path(__file__).parents[1]
-    model_file = plugin_root / "models" / "llm" / "muse-spark-1.2-contributor.yaml"
+    model_file = plugin_root / "models" / "llm" / f"{model_name}.yaml"
     model = yaml.safe_load(model_file.read_text(encoding="utf-8"))
     schema = AIModelEntity.model_validate(model)
     rules = {rule["name"]: rule for rule in model["parameter_rules"]}
 
-    assert schema.model == "muse-spark-1.2-contributor"
+    assert schema.model == model_name
     assert model["features"] == [
         "agent-thought",
         "vision",
@@ -280,7 +290,7 @@ def test_muse_spark_contributor_exposes_only_verified_capabilities() -> None:
         "multi-tool-call",
         "stream-tool-call",
     ]
-    assert model["model_properties"]["context_size"] == 1048576
+    assert model["model_properties"]["context_size"] == context_size
     assert set(rules) == {
         "temperature",
         "top_p",
@@ -312,4 +322,4 @@ def test_muse_spark_contributor_exposes_only_verified_capabilities() -> None:
     assert model["extra"]["token_param_name"] == "max_completion_tokens"
 
     position = yaml.safe_load((plugin_root / "models" / "llm" / "_position.yaml").read_text(encoding="utf-8"))
-    assert position.count("muse-spark-1.2-contributor") == 1
+    assert position.count(model_name) == 1

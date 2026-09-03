@@ -105,11 +105,14 @@ def test_codex_auth_models_drop_parameters_stripped_by_upstream(model: str) -> N
     assert parameters == {"reasoning_effort": "max"}
 
 
-def test_muse_uses_responses_with_official_capabilities() -> None:
-    assert model_family("muse-spark-1.2-contributor") == "openai_responses"
+@pytest.mark.parametrize(
+    "model", ["muse-spark-1.2-contributor", "muse-spark-1.3-contributor"]
+)
+def test_muse_uses_responses_with_verified_capabilities(model: str) -> None:
+    assert model_family(model) == "openai_responses"
 
     body = _adapter()._build_body(
-        model="muse-spark-1.2-contributor",
+        model=model,
         credentials={},
         prompt_messages=[SystemPromptMessage(content="You are helpful.")],
         model_parameters={
@@ -176,8 +179,11 @@ def test_grok_46_accepts_public_image_url() -> None:
     ("filename", "mime_type"),
     [("notes.txt", "text/plain"), ("data.json", "application/json")],
 )
+@pytest.mark.parametrize(
+    "model", ["muse-spark-1.2-contributor", "muse-spark-1.3-contributor"]
+)
 def test_muse_accepts_non_pdf_document_file_data(
-    monkeypatch, filename: str, mime_type: str
+    monkeypatch, filename: str, mime_type: str, model: str
 ) -> None:
     adapter = _adapter()
     monkeypatch.setattr(
@@ -187,7 +193,7 @@ def test_muse_accepts_non_pdf_document_file_data(
     )
 
     body = adapter._build_body(
-        model="muse-spark-1.2-contributor",
+        model=model,
         credentials={},
         prompt_messages=[
             UserPromptMessage(
