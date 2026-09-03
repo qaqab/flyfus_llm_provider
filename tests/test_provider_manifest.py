@@ -163,6 +163,33 @@ def test_gemini_37_flash_exposes_only_verified_capabilities() -> None:
     assert position.count("gemini-3.7-flash") == 1
 
 
+def test_gemini_38_flash_exposes_only_verified_capabilities() -> None:
+    plugin_root = Path(__file__).parents[1]
+    model_file = plugin_root / "models" / "llm" / "gemini-3.8-flash.yaml"
+    model = yaml.safe_load(model_file.read_text(encoding="utf-8"))
+    schema = AIModelEntity.model_validate(model)
+    rules = {rule["name"]: rule for rule in model["parameter_rules"]}
+
+    assert schema.model == "gemini-3.8-flash"
+    assert model["features"] == ["agent-thought", "vision", "document", "tool-call"]
+    assert model["model_properties"]["context_size"] == 1046528
+    assert set(rules) == {
+        "response_format",
+        "json_schema",
+        "thinking_level",
+        "enable_web_search",
+    }
+    assert rules["thinking_level"]["options"] == ["low", "medium", "high"]
+    assert "default" not in rules["thinking_level"]
+    assert rules["response_format"]["options"] == ["text", "json_object", "json_schema"]
+    assert rules["enable_web_search"]["default"] is False
+
+    position = yaml.safe_load(
+        (plugin_root / "models" / "llm" / "_position.yaml").read_text(encoding="utf-8")
+    )
+    assert position.count("gemini-3.8-flash") == 1
+
+
 def test_ling_flash_exposes_only_verified_capabilities() -> None:
     plugin_root = Path(__file__).parents[1]
     model_file = plugin_root / "models" / "llm" / "ling-3.0-flash.yaml"
@@ -291,7 +318,7 @@ def test_muse_spark_contributor_exposes_only_verified_capabilities(
         "stream-tool-call",
     ]
     assert model["model_properties"]["context_size"] == context_size
-    assert set(rules) == {
+    expected_parameters = {
         "temperature",
         "top_p",
         "max_tokens",
@@ -302,6 +329,9 @@ def test_muse_spark_contributor_exposes_only_verified_capabilities(
         "reasoning_effort",
         "enable_web_search",
     }
+    if model_name == "muse-spark-1.3-contributor":
+        expected_parameters -= {"frequency_penalty", "presence_penalty"}
+    assert set(rules) == expected_parameters
     assert rules["temperature"]["min"] == 0
     assert rules["temperature"]["max"] == 2
     assert rules["top_p"]["min"] == 0.01
@@ -309,10 +339,11 @@ def test_muse_spark_contributor_exposes_only_verified_capabilities(
     assert rules["max_tokens"]["default"] == 128000
     assert rules["max_tokens"]["min"] == 512
     assert rules["max_tokens"]["max"] == 128000
-    assert rules["frequency_penalty"]["min"] == -2
-    assert rules["frequency_penalty"]["max"] == 2
-    assert rules["presence_penalty"]["min"] == -2
-    assert rules["presence_penalty"]["max"] == 2
+    if model_name == "muse-spark-1.2-contributor":
+        assert rules["frequency_penalty"]["min"] == -2
+        assert rules["frequency_penalty"]["max"] == 2
+        assert rules["presence_penalty"]["min"] == -2
+        assert rules["presence_penalty"]["max"] == 2
     assert rules["response_format"]["options"] == ["text", "json_object", "json_schema"]
     assert rules["reasoning_effort"]["options"] == ["minimal", "low", "medium", "high", "xhigh"]
     assert rules["reasoning_effort"]["default"] == "high"

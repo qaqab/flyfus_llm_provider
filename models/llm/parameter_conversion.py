@@ -27,6 +27,8 @@ _IGNORED_GENERATION_PARAMETERS = {
     "gemini-3.6-flash": _GEMINI_AUTH_IGNORED_GENERATION_PARAMETERS,
     "gemini-3.7-flash": _GEMINI_AUTH_IGNORED_GENERATION_PARAMETERS
     | {"temperature", "top_p", "response_format", "json_schema"},
+    "gemini-3.8-flash": _GEMINI_AUTH_IGNORED_GENERATION_PARAMETERS
+    | {"temperature", "top_p"},
     "gpt-5.5": _CODEX_AUTH_IGNORED_GENERATION_PARAMETERS,
     "gpt-5.6-sol": _CODEX_AUTH_IGNORED_GENERATION_PARAMETERS,
     "gpt-5.6-terra": _CODEX_AUTH_IGNORED_GENERATION_PARAMETERS,
@@ -55,6 +57,7 @@ GEMINI_WEB_SEARCH_MODELS = frozenset(
         "gemini-3.1-pro-preview",
         "gemini-3.6-flash",
         "gemini-3.7-flash",
+        "gemini-3.8-flash",
     }
 )
 

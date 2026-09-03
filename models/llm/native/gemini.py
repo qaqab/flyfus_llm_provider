@@ -173,6 +173,7 @@ class GeminiNativeDocumentAdapter:
             "gemini-3.5-flash",
             "gemini-3.6-flash",
             "gemini-3.7-flash",
+            "gemini-3.8-flash",
         }:
             web_search_tool = None
         if web_search_tool == {"google_search": {}}:

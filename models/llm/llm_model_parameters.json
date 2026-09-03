@@ -206,6 +206,27 @@
     }
   },
   {
+    "model": "gemini-3.8-flash",
+    "parameters": {
+      "reasoning_effort": {
+        "type": "enum",
+        "values": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "enable_web_search": {
+        "type": "boolean",
+        "values": [
+          true,
+          false
+        ],
+        "default": false
+      }
+    }
+  },
+  {
     "model": "glm-5.1",
     "parameters": {
       "max_tokens": {
@@ -709,18 +730,6 @@
         "type": "number",
         "min": 0.01,
         "max": 1
-      },
-      "frequency_penalty": {
-        "type": "number",
-        "min": -2,
-        "max": 2,
-        "default": 0
-      },
-      "presence_penalty": {
-        "type": "number",
-        "min": -2,
-        "max": 2,
-        "default": 0
       },
       "reasoning_effort": {
         "type": "enum",

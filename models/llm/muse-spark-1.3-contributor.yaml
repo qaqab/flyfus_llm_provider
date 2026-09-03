@@ -30,16 +30,6 @@ parameter_rules:
   default: 128000
   min: 512
   max: 128000
-- name: frequency_penalty
-  use_template: frequency_penalty
-  default: 0
-  min: -2
-  max: 2
-- name: presence_penalty
-  use_template: presence_penalty
-  default: 0
-  min: -2
-  max: 2
 - name: response_format
   use_template: response_format
   options:

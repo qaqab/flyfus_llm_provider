@@ -1,0 +1,53 @@
+model: gemini-3.8-flash
+label:
+  zh_Hans: gemini-3.8-flash
+  en_US: gemini-3.8-flash
+model_type: llm
+features:
+- agent-thought
+- vision
+- document
+- tool-call
+model_properties:
+  mode: chat
+  context_size: 1046528
+parameter_rules:
+- name: response_format
+  use_template: response_format
+  options:
+  - text
+  - json_object
+  - json_schema
+- name: json_schema
+  use_template: json_schema
+- name: thinking_level
+  label:
+    en_US: Thinking Level
+    zh_Hans: 思考层级
+  type: string
+  options:
+  - low
+  - medium
+  - high
+  required: false
+  help:
+    zh_Hans: 控制模型推理深度；留空时使用模型默认值。
+    en_US: Controls model reasoning depth; leave unset to use the model default.
+- name: enable_web_search
+  type: boolean
+  required: false
+  default: false
+  label:
+    en_US: Web search
+    zh_Hans: 联网搜索
+  help:
+    zh_Hans: 请求 Gemini 原生 Google Search；当前链路不能与函数工具同时启用。
+    en_US: Requests native Google Search; the current route cannot combine it with function tools.
+pricing:
+  input: '0'
+  output: '0'
+  unit: '0.000001'
+  currency: USD
+extra:
+  thinking:
+    mode: gemini
