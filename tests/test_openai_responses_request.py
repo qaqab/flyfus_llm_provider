@@ -10,9 +10,11 @@ from dify_plugin.entities.model.message import (
     DocumentPromptMessageContent,
     ImagePromptMessageContent,
     SystemPromptMessage,
+    ToolPromptMessage,
     UserPromptMessage,
 )
 from dify_plugin.errors.model import InvokeError
+from models.llm.agent_context import inject_context_from_tool_messages
 from models.llm.llm import FlyfusLargeLanguageModel
 
 
@@ -173,6 +175,35 @@ def test_grok_46_accepts_public_image_url() -> None:
             "content": [{"type": "input_image", "image_url": image_url}],
         }
     ]
+
+
+def test_muse_accepts_webp_url_from_read_file_context() -> None:
+    image_url = "https://o1.flyfus.com/I/E9eupp.webp"
+    prompt_messages = [
+        ToolPromptMessage(
+            name="read_file",
+            tool_call_id="read-file-1",
+            content=f"<FLYFUS_CONTEXT>image: {image_url}</FLYFUS_CONTEXT>",
+        )
+    ]
+    inject_context_from_tool_messages(prompt_messages, include_files=True)
+
+    body = _adapter()._build_body(
+        model="muse-spark-1.2-contributor",
+        credentials={},
+        prompt_messages=prompt_messages,
+        model_parameters={},
+        tools=None,
+        stop=None,
+        stream=False,
+        user=None,
+    )
+
+    assert body["input"][-1]["content"][-1] == {
+        "type": "input_image",
+        "image_url": image_url,
+        "detail": "high",
+    }
 
 
 @pytest.mark.parametrize(

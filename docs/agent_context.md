@@ -22,7 +22,7 @@ file1: "https://example.com/a.md"
 - `FLYFUS_SETTING` 不作为模型内容，只用于模型参数和日志字段解析。
 - `FLYFUS_CONTEXT` 内部按正则扫描公网 URL，不要求 JSON 或字段名。
 - `FLYFUS_CONTEXT` 内部可以是普通文本、JSON、列表或它们的组合。
-- 图片支持 PNG、JPG、JPEG；文件附件支持 MD、TXT、HTML。
+- 图片支持 PNG、JPG、JPEG、WEBP；文件附件支持 MD、TXT、HTML。
 - PDF、CSV、XLS、XLSX URL 保留在消息文本中，但不会作为文件附件注入模型。
 - 同一次模型调用中，相同 URL 只会作为一个附件注入。
 

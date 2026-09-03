@@ -556,6 +556,31 @@ def test_native_gemini_uses_url_from_json_context() -> None:
     }
 
 
+def test_native_gemini_uses_webp_url_from_context() -> None:
+    image_url = "https://o1.flyfus.com/I/E9eupp.webp"
+    prompt_messages = [
+        ToolPromptMessage(
+            name="read_file",
+            tool_call_id="read-file-1",
+            content=f"<FLYFUS_CONTEXT>image: {image_url}</FLYFUS_CONTEXT>",
+        )
+    ]
+
+    inject_context_from_tool_messages(prompt_messages, include_files=False)
+
+    body = _adapter().build_body(
+        model="gemini-3.5-flash",
+        prompt_messages=prompt_messages,
+        model_parameters={},
+        tools=None,
+        stop=None,
+    )
+
+    assert body["contents"][-1]["parts"][-1] == {
+        "fileData": {"mimeType": "image/webp", "fileUri": image_url}
+    }
+
+
 def test_context_regex_classifies_image_and_file_urls() -> None:
     image_url = "https://example.com/a.jpg?signature=abc"
     file_url = "https://example.com/report.md"
