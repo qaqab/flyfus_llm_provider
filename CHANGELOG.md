@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.90
+
+- Generate a random UUID for upstream `metadata.session_id` when `chat_session_id` is absent or empty; reuse it for internal retries of the same invocation and preserve explicitly supplied session IDs.
+
 ## 0.0.86
 
 - Add the live-tested `muse-spark-1.3-contributor` model with Responses API routing, reasoning, vision, document, tool-call, structured-output, streaming, and web-search support.

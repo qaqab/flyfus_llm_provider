@@ -67,7 +67,8 @@ Tool 消息中的 `log_context` 会被删除，但不会写入日志。
 
 插件使用最近一条包含有效 `log_context` Setting 的 User 消息。Agent 后续追加的不含
 Setting 的自动重试 User 消息不会清空已经解析的日志上下文。`chat_session_id` 作为每次
-上游模型请求的 `metadata.session_id`；缺失时不发送 `metadata`，不会回退到 `workflow_run_id`。
+上游模型请求的 `metadata.session_id`；缺失或为空时，每次模型调用生成随机 UUID，同一次调用的
+内部重试复用该值，不会回退到 `conversation_id` 或 `workflow_run_id`。
 
 模型调用成功完成后，Token 用量接口还会收到 `user_id`、`app_id`、`workflow_id`、
 `workflow_run_id`、`conversation_id`、Dify `user` 和 AI Mode 末段的 `mode`（例如 `fast`、

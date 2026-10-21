@@ -1,4 +1,6 @@
+import json
 from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 
@@ -64,6 +66,61 @@ def test_openai_compatible_request_includes_session_metadata() -> None:
     )
 
     assert body["metadata"] == {"session_id": "run-1"}
+
+
+@pytest.mark.parametrize("session_id", [None, "   ", "provided-session"])
+def test_muse_invocation_session_metadata_is_stable_across_retries(
+    monkeypatch, session_id
+) -> None:
+    posted = []
+
+    class Response:
+        headers = {}
+
+        def __init__(self, status_code):
+            self.status_code = status_code
+            self.text = "temporarily unavailable" if status_code == 503 else ""
+
+        def close(self):
+            pass
+
+        def json(self):
+            return {"id": "response-test", "status": "completed", "output_text": "ok"}
+
+    def post(_url, **kwargs):
+        posted.append(kwargs["json"])
+        return Response(503 if len(posted) % 2 else 200)
+
+    monkeypatch.setattr("models.llm.native.openai_responses.requests.post", post)
+    monkeypatch.setattr("models.llm.llm.report_token_usage", lambda *_a, **_kw: True)
+    monkeypatch.setattr(
+        "models.llm.invocation_logging.write_invocation_log", lambda *_a, **_kw: None
+    )
+    model = object.__new__(FlyfusLargeLanguageModel)
+    monkeypatch.setattr(model, "_build_dify_usage", lambda *_a: LLMUsage.empty_usage())
+    context = {"type": "log_context", "conversation_id": "conversation-1", "workflow_run_id": "run-1"}
+    if session_id is not None:
+        context["chat_session_id"] = session_id
+    content = f"hello<FLYFUS_SETTING>{json.dumps(context)}</FLYFUS_SETTING>"
+    for _ in range(2):
+        result = model._invoke(
+            model="muse-spark-1.3-contributor",
+            credentials={"endpoint_url": "https://example.test/", "api_key": "test-key"},
+            prompt_messages=[UserPromptMessage(content=content)],
+            model_parameters={},
+            stream=False,
+        )
+        assert result.message.content == "ok"
+
+    ids = [body["metadata"]["session_id"] for body in posted]
+    assert len(ids) == 4
+    assert ids[0] == ids[1]
+    assert ids[2] == ids[3]
+    if session_id and session_id.strip():
+        assert ids == [session_id] * 4
+    else:
+        assert ids[0] != ids[2]
+        assert all(UUID(value).version == 4 for value in ids)
 
 
 def test_ling_responses_uses_output_budget_and_explicit_none_effort() -> None:

@@ -647,11 +647,9 @@ class FlyfusLargeLanguageModel(OAICompatLargeLanguageModel):
         route = apply_model_route(model, model_parameters, prompt_messages)
         apply_flyfus_memory(prompt_messages)
         flyfus_settings = extract_flyfus_settings(prompt_messages)
-        request_metadata = (
-            {"session_id": flyfus_settings.chat_session_id}
-            if flyfus_settings.chat_session_id
-            else None
-        )
+        request_metadata = {
+            "session_id": flyfus_settings.chat_session_id or str(uuid.uuid4())
+        }
         ai_mode = apply_ai_mode(
             route.model,
             route.parameters,
